@@ -25,7 +25,7 @@ class Rank(IntEnum):
     NINE = 9
     TEN = 10
     JACK = 11
-    QUEEEN = 12
+    QUEEN = 12
     KING = 13
     ACE = 14
 
