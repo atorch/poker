@@ -63,7 +63,7 @@ def strength(hand):
 
     if most_common_ranks[0][1] == 2:
         # Pair
-        return 100
+        return 100 + most_common_ranks[0][0]
 
     # High card
     return sorted_hand[-1].rank

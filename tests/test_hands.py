@@ -103,6 +103,14 @@ def test_hand_strengh():
         Card(Rank.JACK, Suit.HEARTS),
     ]
 
+    pair_of_eights = [
+        Card(Rank.THREE, Suit.DIAMONDS),
+        Card(Rank.SEVEN, Suit.HEARTS),
+        Card(Rank.TWO, Suit.HEARTS),
+        Card(Rank.EIGHT, Suit.CLUBS),
+        Card(Rank.EIGHT, Suit.HEARTS),
+    ]
+
     queen_high = [
         Card(Rank.JACK, Suit.CLUBS),
         Card(Rank.EIGHT, Suit.HEARTS),
@@ -134,6 +142,7 @@ def test_hand_strengh():
         > strength(three_of_a_kind)
         > strength(two_pair)
         > strength(pair_of_jacks)
+        > strength(pair_of_eights)
         > strength(queen_high)
         > strength(jack_high)
         > strength(nine_high)
