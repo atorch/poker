@@ -63,6 +63,22 @@ def test_hand_strengh():
         Card(Rank.TEN, Suit.HEARTS),
     ]
 
+    four_aces = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.ACE, Suit.SPADES),
+        Card(Rank.ACE, Suit.CLUBS),
+        Card(Rank.ACE, Suit.DIAMONDS),
+        Card(Rank.JACK, Suit.HEARTS),
+    ]
+
+    four_queens = [
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.QUEEN, Suit.SPADES),
+        Card(Rank.QUEEN, Suit.CLUBS),
+        Card(Rank.QUEEN, Suit.DIAMONDS),
+        Card(Rank.JACK, Suit.HEARTS),
+    ]
+
     flush = [
         Card(Rank.ACE, Suit.HEARTS),
         Card(Rank.JACK, Suit.HEARTS),
@@ -79,12 +95,20 @@ def test_hand_strengh():
         Card(Rank.TEN, Suit.HEARTS),
     ]
 
-    three_of_a_kind = [
+    three_sevens = [
         Card(Rank.SEVEN, Suit.HEARTS),
         Card(Rank.SEVEN, Suit.CLUBS),
         Card(Rank.SEVEN, Suit.DIAMONDS),
         Card(Rank.TWO, Suit.HEARTS),
         Card(Rank.JACK, Suit.HEARTS),
+    ]
+
+    three_sixes = [
+        Card(Rank.SIX, Suit.HEARTS),
+        Card(Rank.SIX, Suit.CLUBS),
+        Card(Rank.SIX, Suit.DIAMONDS),
+        Card(Rank.FIVE, Suit.HEARTS),
+        Card(Rank.JACK, Suit.SPADES),
     ]
 
     two_pair = [
@@ -109,6 +133,14 @@ def test_hand_strengh():
         Card(Rank.TWO, Suit.HEARTS),
         Card(Rank.EIGHT, Suit.CLUBS),
         Card(Rank.EIGHT, Suit.HEARTS),
+    ]
+
+    pair_of_sevens = [
+        Card(Rank.THREE, Suit.DIAMONDS),
+        Card(Rank.JACK, Suit.HEARTS),
+        Card(Rank.TWO, Suit.HEARTS),
+        Card(Rank.SEVEN, Suit.CLUBS),
+        Card(Rank.SEVEN, Suit.HEARTS),
     ]
 
     queen_high = [
@@ -137,12 +169,16 @@ def test_hand_strengh():
 
     assert (
         strength(straight_flush)
+        > strength(four_aces)
+        > strength(four_queens)
         > strength(flush)
         > strength(ace_high_straight)
-        > strength(three_of_a_kind)
+        > strength(three_sevens)
+        > strength(three_sixes)
         > strength(two_pair)
         > strength(pair_of_jacks)
         > strength(pair_of_eights)
+        > strength(pair_of_sevens)
         > strength(queen_high)
         > strength(jack_high)
         > strength(nine_high)
