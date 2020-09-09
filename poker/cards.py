@@ -31,3 +31,6 @@ class Rank(IntEnum):
 
 
 Card = namedtuple("Card", ["rank", "suit"])
+
+
+FULL_DECK = tuple(Card(rank, suit) for rank in Rank for suit in Suit)

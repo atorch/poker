@@ -1,4 +1,6 @@
-from poker.cards import Suit, Rank, Card
+from collections import Counter
+
+from poker.cards import FULL_DECK, Suit, Rank, Card
 
 
 def test_card_comparison():
@@ -17,3 +19,18 @@ def test_card_comparison():
 
     assert ace_of_hearts.suit == ten_of_hearts.suit
     assert ace_of_hearts.suit != king_of_spades.suit
+
+
+def test_deck():
+
+    assert len(FULL_DECK) == 52
+
+    suit_counter = Counter([card.suit for card in FULL_DECK])
+
+    for suit in Suit:
+        assert suit_counter[suit] == 13
+
+    rank_counter = Counter([card.rank for card in FULL_DECK])
+
+    for rank in Rank:
+        assert rank_counter[rank] == 4
