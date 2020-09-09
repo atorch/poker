@@ -1,6 +1,8 @@
 from collections import Counter
 from operator import attrgetter
 
+from poker.cards import Rank
+
 
 def sort_hand(hand):
 
@@ -9,14 +11,22 @@ def sort_hand(hand):
 
 def is_straight(sorted_hand):
 
+    if sorted_hand[-1].rank == Rank.ACE and sorted_hand[0].rank == Rank.TWO:
+
+        # Note: in this case the sorted hand is [two, ... , ace]
+        straight_tiebreaker = sorted_hand[-2].rank
+        return is_straight(sorted_hand[:-1])[0], straight_tiebreaker
+
+    straight_tiebreaker = sorted_hand[-1].rank
+
     for i, card in enumerate(sorted_hand[:-1]):
 
         next_card = sorted_hand[i + 1]
 
         if card.rank + 1 != next_card.rank:
-            return False
+            return False, straight_tiebreaker
 
-    return True
+    return True, straight_tiebreaker
 
 
 def strength(hand):
@@ -26,17 +36,17 @@ def strength(hand):
     unique_suits = set(card.suit for card in hand)
 
     sorted_hand = sort_hand(hand)
-    straight = is_straight(sorted_hand)
+    straight, straight_tiebreaker = is_straight(sorted_hand)
 
     # Note: the hand is a flush (either a straight flush or a regular flush)
     if len(unique_suits) == 1:
 
         if straight:
             # Straight flush
-            return 1000
+            return 1000 + straight_tiebreaker
 
-        # Regular flush
-        return 500
+        # Regular flush (ties broken by the rank of the high card)
+        return 500 + sorted_hand[-1].rank
 
     rank_counter = Counter([card.rank for card in hand])
     most_common_ranks = rank_counter.most_common()
@@ -55,9 +65,8 @@ def strength(hand):
         return 600
 
     if straight:
-        # Regular straight (not a straight flush)
-        # TODO Tiebreaking for straights (stronger/weaker straights), including ace-low straights
-        return 400
+        # Regular straight
+        return 400 + straight_tiebreaker
 
     if first_most_common_count == 3:
         # Three of a kind (with ties broken by rank)

@@ -23,11 +23,27 @@ def test_sort_hand():
 def test_straights():
 
     straight = [
+        Card(Rank.SIX, Suit.SPADES),
+        Card(Rank.SEVEN, Suit.DIAMONDS),
         Card(Rank.THREE, Suit.CLUBS),
         Card(Rank.FOUR, Suit.CLUBS),
         Card(Rank.FIVE, Suit.CLUBS),
-        Card(Rank.SIX, Suit.SPADES),
-        Card(Rank.SEVEN, Suit.DIAMONDS),
+    ]
+
+    ace_low_straight = [
+        Card(Rank.THREE, Suit.CLUBS),
+        Card(Rank.FOUR, Suit.CLUBS),
+        Card(Rank.FIVE, Suit.CLUBS),
+        Card(Rank.ACE, Suit.SPADES),
+        Card(Rank.TWO, Suit.DIAMONDS),
+    ]
+
+    almost_ace_low_straight = [
+        Card(Rank.THREE, Suit.CLUBS),
+        Card(Rank.FOUR, Suit.CLUBS),
+        Card(Rank.SIX, Suit.CLUBS),
+        Card(Rank.ACE, Suit.SPADES),
+        Card(Rank.TWO, Suit.DIAMONDS),
     ]
 
     non_straight = [
@@ -46,21 +62,37 @@ def test_straights():
         Card(Rank.TWO, Suit.CLUBS),
     ]
 
-    assert is_straight(sort_hand(straight))
-    assert not is_straight(sort_hand(non_straight))
-    assert not is_straight(sort_hand(another_non_straight))
-
-    # TODO Also test low straights (ace, two, three, ...)
+    assert is_straight(sort_hand(straight)) == (True, Rank.SEVEN)
+    assert is_straight(sort_hand(ace_low_straight)) == (True, Rank.FIVE)
+    assert not is_straight(sort_hand(almost_ace_low_straight))[0]
+    assert not is_straight(sort_hand(non_straight))[0]
+    assert not is_straight(sort_hand(another_non_straight))[0]
 
 
 def test_hand_strengh():
 
-    straight_flush = [
+    royal_straight_flush = [
         Card(Rank.ACE, Suit.HEARTS),
         Card(Rank.JACK, Suit.HEARTS),
         Card(Rank.QUEEN, Suit.HEARTS),
         Card(Rank.KING, Suit.HEARTS),
         Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    straight_flush = [
+        Card(Rank.NINE, Suit.HEARTS),
+        Card(Rank.JACK, Suit.HEARTS),
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    ace_low_straight_flush = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.TWO, Suit.HEARTS),
+        Card(Rank.THREE, Suit.HEARTS),
+        Card(Rank.FOUR, Suit.HEARTS),
+        Card(Rank.FIVE, Suit.HEARTS),
     ]
 
     four_aces = [
@@ -79,12 +111,20 @@ def test_hand_strengh():
         Card(Rank.JACK, Suit.HEARTS),
     ]
 
-    flush = [
+    flush_ace_high = [
         Card(Rank.ACE, Suit.HEARTS),
         Card(Rank.JACK, Suit.HEARTS),
         Card(Rank.THREE, Suit.HEARTS),
         Card(Rank.SEVEN, Suit.HEARTS),
         Card(Rank.TWO, Suit.HEARTS),
+    ]
+
+    flush_king_high = [
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.JACK, Suit.HEARTS),
+        Card(Rank.THREE, Suit.HEARTS),
+        Card(Rank.SEVEN, Suit.HEARTS),
+        Card(Rank.EIGHT, Suit.HEARTS),
     ]
 
     ace_high_straight = [
@@ -93,6 +133,30 @@ def test_hand_strengh():
         Card(Rank.QUEEN, Suit.HEARTS),
         Card(Rank.KING, Suit.HEARTS),
         Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    king_high_straight = [
+        Card(Rank.NINE, Suit.HEARTS),
+        Card(Rank.JACK, Suit.SPADES),
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    six_high_straight = [
+        Card(Rank.SIX, Suit.HEARTS),
+        Card(Rank.TWO, Suit.SPADES),
+        Card(Rank.THREE, Suit.HEARTS),
+        Card(Rank.FOUR, Suit.HEARTS),
+        Card(Rank.FIVE, Suit.HEARTS),
+    ]
+
+    ace_low_straight = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.TWO, Suit.SPADES),
+        Card(Rank.THREE, Suit.HEARTS),
+        Card(Rank.FOUR, Suit.HEARTS),
+        Card(Rank.FIVE, Suit.HEARTS),
     ]
 
     three_sevens = [
@@ -168,11 +232,17 @@ def test_hand_strengh():
     ]
 
     assert (
-        strength(straight_flush)
+        strength(royal_straight_flush)
+        > strength(straight_flush)
+        > strength(ace_low_straight_flush)
         > strength(four_aces)
         > strength(four_queens)
-        > strength(flush)
+        > strength(flush_ace_high)
+        > strength(flush_king_high)
         > strength(ace_high_straight)
+        > strength(king_high_straight)
+        > strength(six_high_straight)
+        > strength(ace_low_straight)
         > strength(three_sevens)
         > strength(three_sixes)
         > strength(two_pair)
