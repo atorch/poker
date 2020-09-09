@@ -1,16 +1,28 @@
-from poker.state import get_next_state, State
+from poker.state import GameStage, State
 
 
-def test_get_next_state():
+def test_state():
 
-    initial_state = State()
+    state = State()
 
-    n_cards_in_deck_after_initial_deal = 52 - initial_state.n_players * 2
-    assert len(initial_state.shuffled_deck) == n_cards_in_deck_after_initial_deal
+    n_cards_in_deck_after_initial_deal = 52 - state.n_players * 2
+    assert len(state.shuffled_deck) == n_cards_in_deck_after_initial_deal
 
-    # TODO Actions should represent betting or folding
-    action = 123
+    assert all(player_has_folded is False for player_has_folded in state.has_folded)
 
-    next_state = get_next_state(initial_state, action)
+    # Note: an action of -1 means the current player has folded
+    action_fold = -1
 
-    assert next_state
+    # Note: this is the first player to take action
+    initial_player = state.current_player
+
+    state.update(action_fold)
+    assert state.has_folded[initial_player]
+
+    second_player = state.current_player
+    assert second_player == initial_player + 1
+
+    action_bet = 10
+
+    state.update(action_bet)
+    assert state.bets_by_stage[GameStage.PRE_FLOP][second_player] == [10]
