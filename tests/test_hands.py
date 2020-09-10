@@ -1,5 +1,5 @@
 from poker.cards import Suit, Rank, Card
-from poker.hands import is_straight, strength, sort_hand
+from poker.hands import best_hand_strength, is_straight, strength, sort_hand
 
 
 def test_sort_hand():
@@ -67,6 +67,40 @@ def test_straights():
     assert not is_straight(sort_hand(almost_ace_low_straight))[0]
     assert not is_straight(sort_hand(non_straight))[0]
     assert not is_straight(sort_hand(another_non_straight))[0]
+
+
+def test_best_hand_strength():
+
+    # Note: the hole cards are a player's private cards
+    hole_cards = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.JACK, Suit.HEARTS),
+    ]
+
+    three_public_cards = [
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    five_public_cards = [
+        Card(Rank.SEVEN, Suit.CLUBS),
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.TEN, Suit.HEARTS),
+        Card(Rank.TWO, Suit.CLUBS),
+    ]
+
+    royal_straight_flush = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.JACK, Suit.HEARTS),
+        Card(Rank.QUEEN, Suit.HEARTS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.TEN, Suit.HEARTS),
+    ]
+
+    assert best_hand_strength(three_public_cards, hole_cards) == strength(royal_straight_flush)
+    assert best_hand_strength(five_public_cards, hole_cards) == strength(royal_straight_flush)
 
 
 def test_hand_strengh():

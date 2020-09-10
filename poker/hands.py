@@ -1,4 +1,5 @@
 from collections import Counter
+from itertools import combinations
 from operator import attrgetter
 
 from poker.cards import Rank
@@ -27,6 +28,13 @@ def is_straight(sorted_hand):
             return False, straight_tiebreaker
 
     return True, straight_tiebreaker
+
+
+def best_hand_strength(public_cards, hole_cards):
+
+    available_cards = public_cards + hole_cards
+
+    return max(strength(candidate_hand) for candidate_hand in combinations(available_cards, 5))
 
 
 def strength(hand):
