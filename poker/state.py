@@ -13,7 +13,14 @@ class GameStage(IntEnum):
 
 
 class State:
-    def __init__(self, n_players=3, initial_wealth=100, big_blind=2, small_blind=1):
+    def __init__(
+        self,
+        n_players=3,
+        initial_wealth=100,
+        big_blind=2,
+        small_blind=1,
+        initial_dealer=0,
+    ):
 
         self.n_players = n_players
 
@@ -27,12 +34,12 @@ class State:
 
         self.game_stage = GameStage.PRE_FLOP
 
-        self.dealer = 0
-
-        # Note: this is the player to the left of the dealer
-        self.current_player = 1
+        self.dealer = initial_dealer
 
         self.has_folded = [False for player in range(self.n_players)]
+
+        # Note: this is the player to the left of the dealer
+        self.current_player = self.get_next_player(self.dealer)
 
         self.wealth = [initial_wealth for player in range(self.n_players)]
 
@@ -43,17 +50,15 @@ class State:
     def get_next_player(self, current_player):
 
         next_player = (current_player + 1) % self.n_players
-        all_others_have_folded = False
 
         while self.has_folded[next_player]:
 
             next_player = (next_player + 1) % self.n_players
 
             if next_player == current_player:
-                all_others_have_folded = True
                 break
 
-        return next_player, all_others_have_folded
+        return next_player
 
     def deal_k_cards(self, k=2):
 
@@ -89,11 +94,18 @@ class State:
 
         self.update_has_folded_or_bets(action)
 
-        next_player, all_others_have_folded = self.get_next_player(self.current_player)
+        over_due_to_folding = sum(self.has_folded) >= self.n_players - 1
 
-        if self.stage_is_complete(next_player):
+        next_player = self.get_next_player(self.current_player)
 
+        if not over_due_to_folding and self.stage_is_complete(next_player):
+
+            # TODO This won't work if we've reached this river :-) need to find the strongest hand
             self.game_stage += 1
+
+            # Note: after moving to the next stage, the first person to act is
+            #  the first person left of the dealer (ignoring players who have already folded)
+            self.current_player = self.get_next_player(self.dealer)
 
             if self.game_stage == GameStage.FLOP:
                 self.public_cards.extend(self.deal_k_cards(3))
@@ -102,12 +114,23 @@ class State:
             ):
                 self.public_cards.extend(self.deal_k_cards(1))
 
+        elif over_due_to_folding:
+            # TODO Finish this: if all other players have folded, the remaining player wins their bets
+            # TODO Remove wealth from other players
+            winning_player = next_player
+
+            losing_players = [
+                player for player in range(self.n_players) if player != winning_player
+            ]
+
+            for losing_player in losing_players:
+
+                for stage in GameStage:
+                    total_bet_by_losing_player = sum(
+                        self.bets_by_stage[stage][losing_player]
+                    )
+                    self.wealth[winning_player] += total_bet_by_losing_player
+                    self.wealth[losing_player] -= total_bet_by_losing_player
+
         else:
-
-            if all_others_have_folded:
-                # TODO Finish this: if all other players have folded, the remaining player wins their bets
-                # TODO Remove wealth from other players
-                self.wealth[self.current_player] += 123
-
-            else:
-                self.current_player = next_player
+            self.current_player = next_player
