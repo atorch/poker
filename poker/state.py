@@ -2,6 +2,7 @@ from enum import IntEnum
 from random import sample
 
 from poker.cards import Suit, Rank, Card, FULL_DECK
+from poker.hands import best_hand_strength
 
 
 class GameStage(IntEnum):
@@ -94,6 +95,26 @@ class State:
         else:
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
 
+    def redistribute_wealth_and_reinitialize(self, winning_player):
+
+        losing_players = [
+            player for player in range(self.n_players) if player != winning_player
+        ]
+
+        for losing_player in losing_players:
+
+            for stage in GameStage:
+                total_bet_by_losing_player = sum(
+                    self.bets_by_stage[stage][losing_player]
+                )
+                self.wealth[winning_player] += total_bet_by_losing_player
+                self.wealth[losing_player] -= total_bet_by_losing_player
+
+        # Now that we have redistributed wealth, we assign a new dealer,
+        #  deal new cards and go back to the initial stage
+        next_dealer = (self.dealer + 1) % self.n_players
+        self.initialize_pre_flop(dealer=next_dealer)
+
     def update(self, action):
 
         self.update_has_folded_or_bets(action)
@@ -104,42 +125,32 @@ class State:
 
         if not over_due_to_folding and self.stage_is_complete(next_player):
 
-            # TODO This won't work if we've reached this river :-) need to find the strongest hand
-            self.game_stage += 1
+            if self.game_stage <= GameStage.TURN:
+                self.game_stage += 1
 
-            # Note: after moving to the next stage, the first person to act is
-            #  the first person left of the dealer (ignoring players who have already folded)
-            self.current_player = self.get_next_player(self.dealer)
+                # Note: after moving to the next stage, the first person to act is
+                #  the first person left of the dealer (ignoring players who have already folded)
+                self.current_player = self.get_next_player(self.dealer)
 
-            if self.game_stage == GameStage.FLOP:
-                self.public_cards.extend(self.deal_k_cards(3))
-            elif (
-                self.game_stage == GameStage.TURN or self.game_stage == GameStage.RIVER
-            ):
-                self.public_cards.extend(self.deal_k_cards(1))
+                if self.game_stage == GameStage.FLOP:
+                    self.public_cards.extend(self.deal_k_cards(3))
+                elif (
+                    self.game_stage == GameStage.TURN
+                    or self.game_stage == GameStage.RIVER
+                ):
+                    self.public_cards.extend(self.deal_k_cards(1))
+
+            else:
+
+                # Note: we've reached the river and the stage is complete,
+                #  so we need to figure out who has the strongest hand
+                # TODO Use best_hand_strength to find the winning player
+                #  Ignore players who have folded
+                self.redistribute_wealth_and_reinitialize(winning_player)
 
         elif over_due_to_folding:
-            # TODO Finish this: if all other players have folded, the remaining player wins their bets
-            # TODO Remove wealth from other players
             winning_player = next_player
-
-            losing_players = [
-                player for player in range(self.n_players) if player != winning_player
-            ]
-
-            for losing_player in losing_players:
-
-                for stage in GameStage:
-                    total_bet_by_losing_player = sum(
-                        self.bets_by_stage[stage][losing_player]
-                    )
-                    self.wealth[winning_player] += total_bet_by_losing_player
-                    self.wealth[losing_player] -= total_bet_by_losing_player
-
-            # Now that we have redistributed wealth, we assign a new dealer,
-            #  deal new cards and go back to the initial stage
-            next_dealer = (self.dealer + 1) % self.n_players
-            self.initialize_pre_flop(dealer=next_dealer)
+            self.redistribute_wealth_and_reinitialize(winning_player)
 
         else:
             self.current_player = next_player
