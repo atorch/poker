@@ -24,24 +24,28 @@ class State:
 
         self.n_players = n_players
 
+        self.wealth = [initial_wealth for player in range(self.n_players)]
+
+        self.initialize_pre_flop(dealer=initial_dealer)
+
+    def initialize_pre_flop(self, dealer):
+
         self.shuffled_deck = sample(FULL_DECK, k=len(FULL_DECK))
+
+        self.public_cards = []
 
         # Note: these are the private (face down) cards which are hidden from other players
         #  Player i observes only hole_cards[i]
         self.hole_cards = self.deal_hole_cards()
 
-        self.public_cards = []
-
         self.game_stage = GameStage.PRE_FLOP
 
-        self.dealer = initial_dealer
+        self.dealer = dealer
 
         self.has_folded = [False for player in range(self.n_players)]
 
         # Note: this is the player to the left of the dealer
         self.current_player = self.get_next_player(self.dealer)
-
-        self.wealth = [initial_wealth for player in range(self.n_players)]
 
         self.bets_by_stage = {
             stage: [[] for player in range(self.n_players)] for stage in GameStage
@@ -131,6 +135,11 @@ class State:
                     )
                     self.wealth[winning_player] += total_bet_by_losing_player
                     self.wealth[losing_player] -= total_bet_by_losing_player
+
+            # Now that we have redistributed wealth, we assign a new dealer,
+            #  deal new cards and go back to the initial stage
+            next_dealer = (self.dealer + 1) % self.n_players
+            self.initialize_pre_flop(dealer=next_dealer)
 
         else:
             self.current_player = next_player
