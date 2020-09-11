@@ -1,3 +1,5 @@
+import numpy as np
+
 from poker.state import GameStage, State
 
 
@@ -17,7 +19,7 @@ def test_state():
 
     assert all(player_has_folded is False for player_has_folded in state.has_folded)
 
-    # Note: an action of -1 means the current player is folding
+    # Note: any action < 0 means the current player is folding
     action_fold = -1
 
     first_player = state.current_player
@@ -120,6 +122,9 @@ def test_state():
     # Note: even though the stage has not ended, all public cards have
     #  been dealt and we can calculate hand strengths
     hand_strengths = state.calculate_best_hand_strengths()
+    winning_player = np.argmax(hand_strengths)
+
+    wealth_before_winning = state.wealth[winning_player]
 
     # Note: no players have folded, so all hand strengths must be positive
     assert max(hand_strengths) > 0
@@ -128,3 +133,7 @@ def test_state():
     state.update(action_big_bet)
     state.update(action_big_bet)
     state.update(action_small_bet)
+
+    # Note: the bets were small during the flop and turn, and big during the river
+    amount_won = (state.n_players - 1) * (2 * action_small_bet + action_big_bet)
+    assert state.wealth[winning_player] == wealth_before_winning + amount_won

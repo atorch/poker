@@ -174,7 +174,6 @@ class State:
                 hand_strengths = self.calculate_best_hand_strengths()
 
                 winning_player = np.argmax(hand_strengths)
-
                 self.redistribute_wealth_and_reinitialize(winning_player)
 
         elif over_due_to_folding:
