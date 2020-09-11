@@ -76,7 +76,6 @@ def test_state():
 
     assert sum(state.wealth) == initial_wealth * state.n_players
 
-    assert state.game_stage == GameStage.PRE_FLOP
     assert len(state.public_cards) == 0
     assert len(state.shuffled_deck) == n_cards_in_deck_after_initial_deal
 
@@ -87,3 +86,45 @@ def test_state():
 
     assert sum(state.wealth) == initial_wealth * state.n_players
     assert state.wealth[second_player] == initial_wealth + total_bets_by_dealer
+
+    action_knock = 0
+    action_small_bet = 10
+    action_big_bet = 20
+
+    assert state.game_stage == GameStage.PRE_FLOP
+
+    for _ in range(state.n_players):
+        # Note: all players bet $0 pre-flop (TODO Implement big and small blinds),
+        #  and we move to the next stage
+        state.update(action_knock)
+
+    assert state.game_stage == GameStage.FLOP
+    assert len(state.public_cards) == 3
+
+    for _ in range(state.n_players):
+        # Note: all players bet $10 after the flop
+        #  and we move to the next stage
+        state.update(action_small_bet)
+
+    assert state.game_stage == GameStage.TURN
+    assert len(state.public_cards) == 4
+
+    for _ in range(state.n_players):
+        # Note: all players bet $10 after the turn
+        #  and we move to the next stage
+        state.update(action_small_bet)
+
+    assert state.game_stage == GameStage.RIVER
+    assert len(state.public_cards) == 5
+
+    # Note: even though the stage has not ended, all public cards have
+    #  been dealt and we can calculate hand strengths
+    hand_strengths = state.calculate_best_hand_strengths()
+
+    # Note: no players have folded, so all hand strengths must be positive
+    assert max(hand_strengths) > 0
+
+    state.update(action_small_bet)
+    state.update(action_big_bet)
+    state.update(action_big_bet)
+    state.update(action_small_bet)

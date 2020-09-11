@@ -99,8 +99,12 @@ def test_best_hand_strength():
         Card(Rank.TEN, Suit.HEARTS),
     ]
 
-    assert best_hand_strength(three_public_cards, hole_cards) == strength(royal_straight_flush)
-    assert best_hand_strength(five_public_cards, hole_cards) == strength(royal_straight_flush)
+    assert best_hand_strength(three_public_cards, hole_cards) == strength(
+        royal_straight_flush
+    )
+    assert best_hand_strength(five_public_cards, hole_cards) == strength(
+        royal_straight_flush
+    )
 
 
 def test_hand_strengh():

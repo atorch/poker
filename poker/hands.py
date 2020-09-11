@@ -34,7 +34,9 @@ def best_hand_strength(public_cards, hole_cards):
 
     available_cards = public_cards + hole_cards
 
-    return max(strength(candidate_hand) for candidate_hand in combinations(available_cards, 5))
+    return max(
+        strength(candidate_hand) for candidate_hand in combinations(available_cards, 5)
+    )
 
 
 def strength(hand):
@@ -90,4 +92,4 @@ def strength(hand):
         return 100 + first_most_common_rank
 
     # High card
-    return sorted_hand[-1].rank
+    return int(sorted_hand[-1].rank)

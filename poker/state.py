@@ -1,6 +1,8 @@
 from enum import IntEnum
 from random import sample
 
+import numpy as np
+
 from poker.cards import Suit, Rank, Card, FULL_DECK
 from poker.hands import best_hand_strength
 
@@ -28,6 +30,9 @@ class State:
         self.wealth = [initial_wealth for player in range(self.n_players)]
 
         self.initialize_pre_flop(dealer=initial_dealer)
+
+        # TODO Implement small blind and big blind,
+        #  first person to act pre-flop is player after the big blind
 
     def initialize_pre_flop(self, dealer):
 
@@ -78,6 +83,9 @@ class State:
         if len(self.bets_by_stage[self.game_stage][self.current_player]) == 0:
             return False
 
+        if len(self.bets_by_stage[self.game_stage][next_player]) == 0:
+            return False
+
         # Note: these are totals for the current stage only (e.g. player 1 has bet a total of $40 during the turn)
         total_bet_current_player = sum(
             self.bets_by_stage[self.game_stage][self.current_player]
@@ -115,6 +123,25 @@ class State:
         next_dealer = (self.dealer + 1) % self.n_players
         self.initialize_pre_flop(dealer=next_dealer)
 
+    def calculate_best_hand_strengths(self):
+
+        hand_strengths = []
+
+        for player in range(self.n_players):
+
+            if self.has_folded[player]:
+                # Note: players who have folded are given a negative hand strength,
+                #  which prevents them from ever winning
+                hand_strengths.append(-1)
+
+            else:
+                hand_strength = best_hand_strength(
+                    self.public_cards, self.hole_cards[player]
+                )
+                hand_strengths.append(hand_strength)
+
+        return hand_strengths
+
     def update(self, action):
 
         self.update_has_folded_or_bets(action)
@@ -144,8 +171,10 @@ class State:
 
                 # Note: we've reached the river and the stage is complete,
                 #  so we need to figure out who has the strongest hand
-                # TODO Use best_hand_strength to find the winning player
-                #  Ignore players who have folded
+                hand_strengths = self.calculate_best_hand_strengths()
+
+                winning_player = np.argmax(hand_strengths)
+
                 self.redistribute_wealth_and_reinitialize(winning_player)
 
         elif over_due_to_folding:
