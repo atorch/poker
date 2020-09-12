@@ -132,7 +132,10 @@ def test_state():
     state.update(action_small_bet)
     state.update(action_big_bet)
     state.update(action_big_bet)
-    state.update(action_small_bet)
+
+    # Note: this player initially made a small bet, and the next person raised them with a large bet
+    #  The first person to act now completes their bet (calls the raise)
+    state.update(action_big_bet - action_small_bet)
 
     # Note: the bets were small during the flop and turn, and big during the river
     amount_won = (state.n_players - 1) * (2 * action_small_bet + action_big_bet)

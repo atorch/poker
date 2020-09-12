@@ -23,6 +23,7 @@ class State:
         big_blind=2,
         small_blind=1,
         initial_dealer=0,
+        verbose=False,
     ):
 
         self.n_players = n_players
@@ -31,8 +32,19 @@ class State:
 
         self.initialize_pre_flop(dealer=initial_dealer)
 
+        self.verbose = verbose
+
         # TODO Implement small blind and big blind,
         #  first person to act pre-flop is player after the big blind
+
+    def __str__(self):
+
+        first_line = f"State: game stage {self.game_stage}, player {self.current_player} is next to act"
+
+        bets = {int(k): v for k, v in self.bets_by_stage.items()}
+        second_line = f"\n history of bets {bets}"
+
+        return first_line + second_line
 
     def initialize_pre_flop(self, dealer):
 
@@ -100,8 +112,14 @@ class State:
             # Note: negative bets indicate that the player is folding
             self.has_folded[self.current_player] = True
 
+            if self.verbose:
+                print(f"Player {self.current_player} folds")
+
         else:
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
+
+            if self.verbose:
+                print(f"Player {self.current_player} bets ${action}")
 
     def redistribute_wealth_and_reinitialize(self, winning_player):
 
@@ -144,6 +162,9 @@ class State:
 
     def update(self, action):
 
+        if self.verbose:
+            print(self)
+
         self.update_has_folded_or_bets(action)
 
         over_due_to_folding = sum(self.has_folded) >= self.n_players - 1
@@ -173,11 +194,29 @@ class State:
                 #  so we need to figure out who has the strongest hand
                 hand_strengths = self.calculate_best_hand_strengths()
 
+                # TODO This is incorrect if there are ties (multiple players with the same hand),
+                #  in which case the winners split the pot
                 winning_player = np.argmax(hand_strengths)
+
+                if self.verbose:
+                    print(f"Hand strengths: {hand_strengths}")
+                    print(
+                        f"Player {winning_player} wins the hand with hand strength {max(hand_strengths)}"
+                    )
+                    print(f"Public cards: {self.public_cards}")
+                    print(f"Hole cards: {self.hole_cards}")
+
                 self.redistribute_wealth_and_reinitialize(winning_player)
 
         elif over_due_to_folding:
+
             winning_player = next_player
+
+            if self.verbose:
+                print(
+                    f"Player {winning_player} wins the hand because everyone else has folded"
+                )
+
             self.redistribute_wealth_and_reinitialize(winning_player)
 
         else:
