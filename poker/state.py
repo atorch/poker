@@ -39,12 +39,15 @@ class State:
 
     def __str__(self):
 
-        first_line = f"State: game stage {self.game_stage}, player {self.current_player} is next to act"
+        return f"State: game stage {self.game_stage.name}, total pot ${self.total_bets()}, player {self.current_player} is next to act"
 
-        bets = {int(k): v for k, v in self.bets_by_stage.items()}
-        second_line = f"\n history of bets {bets}"
+    def total_bets(self):
 
-        return first_line + second_line
+        total = 0
+        for stage_bets in self.bets_by_stage.values():
+            total += sum(sum(player_bets) for player_bets in stage_bets)
+
+        return total
 
     def initialize_pre_flop(self, dealer):
 
@@ -143,7 +146,7 @@ class State:
 
     def calculate_best_hand_strengths(self):
 
-        hand_strengths = []
+        hand_strengths, hand_descriptions = ([], [])
 
         for player in range(self.n_players):
 
@@ -151,14 +154,16 @@ class State:
                 # Note: players who have folded are given a negative hand strength,
                 #  which prevents them from ever winning
                 hand_strengths.append(-1)
+                hand_descriptions.append("player has folded")
 
             else:
-                hand_strength = best_hand_strength(
+                hand_strength, hand_description = best_hand_strength(
                     self.public_cards, self.hole_cards[player]
                 )
                 hand_strengths.append(hand_strength)
+                hand_descriptions.append(hand_description)
 
-        return hand_strengths
+        return hand_strengths, hand_descriptions
 
     def update(self, action):
 
@@ -174,7 +179,8 @@ class State:
         if not over_due_to_folding and self.stage_is_complete(next_player):
 
             if self.game_stage <= GameStage.TURN:
-                self.game_stage += 1
+
+                self.game_stage = list(GameStage)[self.game_stage + 1]
 
                 # Note: after moving to the next stage, the first person to act is
                 #  the first person left of the dealer (ignoring players who have already folded)
@@ -192,7 +198,7 @@ class State:
 
                 # Note: we've reached the river and the stage is complete,
                 #  so we need to figure out who has the strongest hand
-                hand_strengths = self.calculate_best_hand_strengths()
+                hand_strengths, hand_descriptions = self.calculate_best_hand_strengths()
 
                 # TODO This is incorrect if there are ties (multiple players with the same hand),
                 #  in which case the winners split the pot
@@ -200,8 +206,9 @@ class State:
 
                 if self.verbose:
                     print(f"Hand strengths: {hand_strengths}")
+                    winning_hand_description = hand_descriptions[winning_player]
                     print(
-                        f"Player {winning_player} wins the hand with hand strength {max(hand_strengths)}"
+                        f"Player {winning_player} wins the hand with a {winning_hand_description} (hand strength {max(hand_strengths)})"
                     )
                     print(f"Public cards: {self.public_cards}")
                     print(f"Hole cards: {self.hole_cards}")

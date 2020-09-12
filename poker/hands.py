@@ -52,11 +52,11 @@ def strength(hand):
     if len(unique_suits) == 1:
 
         if straight:
-            # Straight flush
-            return 1000 + straight_tiebreaker
+            # Straight flush (ties broken by the rank of the last card in the straight)
+            return 1000 + straight_tiebreaker, "straight flush"
 
         # Regular flush (ties broken by the rank of the high card)
-        return 500 + sorted_hand[-1].rank
+        return 500 + sorted_hand[-1].rank, "flush"
 
     rank_counter = Counter([card.rank for card in hand])
     most_common_ranks = rank_counter.most_common()
@@ -68,28 +68,28 @@ def strength(hand):
     if first_most_common_count == 4:
         # Four of a kind (with ties broken by rank)
         # TODO Are rank ties broken by the fifth card (the kicker?)
-        return 700 + first_most_common_rank
+        return 700 + first_most_common_rank, "four of a kind"
 
     if first_most_common_count == 3 and second_most_common_count == 2:
         # Full house
-        return 600
+        return 600 + first_most_common_rank, "full house"
 
     if straight:
         # Regular straight
-        return 400 + straight_tiebreaker
+        return 400 + straight_tiebreaker, "straight"
 
     if first_most_common_count == 3:
         # Three of a kind (with ties broken by rank)
         # TODO Do Texas holdem rules break ties using the kicker?
-        return 300 + first_most_common_rank
+        return 300 + first_most_common_rank, "three of a kind"
 
     if first_most_common_count == 2 and second_most_common_count == 2:
         # Two pair (with ties broken first by the rank of the high pair, then by the rank of the low pair)
-        return 200
+        return 200, "two pair"
 
     if first_most_common_count == 2:
         # Pair (with ties broken by the rank of the pair)
-        return 100 + first_most_common_rank
+        return 100 + first_most_common_rank, f"pair of {first_most_common_rank.name}"
 
     # High card
-    return int(sorted_hand[-1].rank)
+    return int(sorted_hand[-1].rank), f"high card ({sorted_hand[-1].rank.name})"

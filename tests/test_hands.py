@@ -270,24 +270,24 @@ def test_hand_strengh():
     ]
 
     assert (
-        strength(royal_straight_flush)
-        > strength(straight_flush)
-        > strength(ace_low_straight_flush)
-        > strength(four_aces)
-        > strength(four_queens)
-        > strength(flush_ace_high)
-        > strength(flush_king_high)
-        > strength(ace_high_straight)
-        > strength(king_high_straight)
-        > strength(six_high_straight)
-        > strength(ace_low_straight)
-        > strength(three_sevens)
-        > strength(three_sixes)
-        > strength(two_pair)
-        > strength(pair_of_jacks)
-        > strength(pair_of_eights)
-        > strength(pair_of_sevens)
-        > strength(queen_high)
-        > strength(jack_high)
-        > strength(nine_high)
+        strength(royal_straight_flush)[0]
+        > strength(straight_flush)[0]
+        > strength(ace_low_straight_flush)[0]
+        > strength(four_aces)[0]
+        > strength(four_queens)[0]
+        > strength(flush_ace_high)[0]
+        > strength(flush_king_high)[0]
+        > strength(ace_high_straight)[0]
+        > strength(king_high_straight)[0]
+        > strength(six_high_straight)[0]
+        > strength(ace_low_straight)[0]
+        > strength(three_sevens)[0]
+        > strength(three_sixes)[0]
+        > strength(two_pair)[0]
+        > strength(pair_of_jacks)[0]
+        > strength(pair_of_eights)[0]
+        > strength(pair_of_sevens)[0]
+        > strength(queen_high)[0]
+        > strength(jack_high)[0]
+        > strength(nine_high)[0]
     )

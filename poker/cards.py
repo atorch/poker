@@ -30,7 +30,17 @@ class Rank(IntEnum):
     ACE = 14
 
 
-Card = namedtuple("Card", ["rank", "suit"])
+class Card:
+    def __init__(self, rank, suit):
+        self.rank = rank
+        self.suit = suit
+
+    def __eq__(self, other):
+        return self.rank == other.rank and self.suit == other.suit
+
+    def __repr__(self):
+        # Example: "SIX of Suit.HEARTS"
+        return f"{self.rank.name} of {self.suit}"
 
 
 FULL_DECK = tuple(Card(rank, suit) for rank in Rank for suit in Suit)

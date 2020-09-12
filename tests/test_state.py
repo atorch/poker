@@ -121,7 +121,7 @@ def test_state():
 
     # Note: even though the stage has not ended, all public cards have
     #  been dealt and we can calculate hand strengths
-    hand_strengths = state.calculate_best_hand_strengths()
+    hand_strengths, hand_descriptions = state.calculate_best_hand_strengths()
     winning_player = np.argmax(hand_strengths)
 
     wealth_before_winning = state.wealth[winning_player]
