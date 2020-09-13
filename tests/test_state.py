@@ -25,16 +25,26 @@ def test_ties():
     ]
 
     # Note: we pass in a deck so that the order in which cards are dealt is known and deterministic
-    state = State(n_players=3, initial_wealth=initial_wealth, initial_dealer=initial_dealer, deck=deck)
+    state = State(
+        n_players=3,
+        initial_wealth=initial_wealth,
+        initial_dealer=initial_dealer,
+        deck=deck,
+    )
 
     action_bet = 1
     action_fold = -1
+    action_knock = 0
+
+    state.update(state.big_blind)
+    state.update(state.small_blind)
+    state.update(action_knock)
+    assert state.game_stage == GameStage.FLOP
 
     for _ in range(state.n_players):
         state.update(action_bet)
 
-    for _ in range(state.n_players):
-        state.update(action_bet)
+    assert state.game_stage == GameStage.TURN
 
     for _ in range(state.n_players):
         state.update(action_bet)
@@ -42,9 +52,9 @@ def test_ties():
     assert state.game_stage == GameStage.RIVER
 
     amount_bet_by_player_who_folds = (
-        sum(state.bets_by_stage[0][state.current_player]) +
-        sum(state.bets_by_stage[1][state.current_player]) +
-        sum(state.bets_by_stage[2][state.current_player])
+        sum(state.bets_by_stage[0][state.current_player])
+        + sum(state.bets_by_stage[1][state.current_player])
+        + sum(state.bets_by_stage[2][state.current_player])
     )
 
     state.update(action_fold)
@@ -79,72 +89,73 @@ def test_state():
     # Note: any action < 0 means the current player is folding
     action_fold = -1
 
-    first_player = state.current_player
+    # Note: player index 1 is the small blind, player index 2 is the big blind,
+    #  so player index 0 (the dealer) is the first to act pre flop
+    assert state.current_player == state.dealer
 
     state.update(action_fold)
-    assert state.has_folded[first_player]
+    assert state.has_folded[state.dealer]
 
-    second_player = state.current_player
-    assert second_player == first_player + 1
+    assert state.current_player == 1
+    ten_dollars = 10
+    complete_blind_plus_ten = (state.big_blind - state.small_blind) + ten_dollars
 
-    # Note: this is a bet of $10
-    action_bet = 10
-
-    state.update(action_bet)
-    assert state.bets_by_stage[GameStage.PRE_FLOP][second_player] == [action_bet]
+    state.update(complete_blind_plus_ten)
+    assert state.bets_by_stage[GameStage.PRE_FLOP][1] == [
+        state.small_blind,
+        complete_blind_plus_ten,
+    ]
     assert state.game_stage == GameStage.PRE_FLOP
 
-    # Note: the third player to act (i.e. the dealer) also bets $10. At this point,
-    #  the first player to act has folded, and the other two have both bet $10.
+    # Note: the big blind player calls. At this point,
+    #  the dealer has folded, and the other two have both bet the big blind plus $10.
     #  We move to the next stage (the flop) and the dealer deals three public cards
-    state.update(action_bet)
+    state.update(ten_dollars)
+    assert state.bets_by_stage[GameStage.PRE_FLOP][2] == [state.big_blind, ten_dollars]
+
     assert state.game_stage == GameStage.FLOP
     assert len(state.public_cards) == 3
     assert len(state.shuffled_deck) == n_cards_in_deck_after_initial_deal - 3
 
-    # Note: the first player has already folded, so the first person to act
-    #  after the flop is the second player
-    assert state.current_player == second_player
+    # Note: the player after the dealer is the first to act after the flop
+    assert state.current_player == 1
 
     # Note: the second player bets $10, then the dealer bets $20,
     #  the first player has already folded and does nothing, and then the second player calls
-    state.update(action_bet)
-    state.update(2 * action_bet)
-    state.update(action_bet)
+    state.update(ten_dollars)
+    state.update(2 * ten_dollars)
+    state.update(ten_dollars)
 
-    assert state.bets_by_stage[GameStage.FLOP][first_player] == []
-    assert state.bets_by_stage[GameStage.FLOP][second_player] == [
-        action_bet,
-        action_bet,
-    ]
-    assert state.bets_by_stage[GameStage.FLOP][state.dealer] == [2 * action_bet]
+    # Note: the dealer folded before making any bets
+    assert state.bets_by_stage[GameStage.FLOP][state.dealer] == []
+    assert state.bets_by_stage[GameStage.FLOP][1] == [ten_dollars, ten_dollars]
+    assert state.bets_by_stage[GameStage.FLOP][2] == [2 * ten_dollars]
 
     assert state.game_stage == GameStage.TURN
     assert len(state.public_cards) == 4
 
-    assert state.current_player == second_player
-    state.update(action_bet)
+    assert state.current_player == 1
+    state.update(ten_dollars)
 
-    assert state.current_player == state.dealer
+    assert state.current_player == 2
     state.update(action_fold)
 
-    total_bets_by_dealer = action_bet * 3
-    assert state.wealth[second_player] == initial_wealth + total_bets_by_dealer
-    assert state.wealth[first_player] == initial_wealth
-    assert state.wealth[initial_dealer] == initial_wealth - total_bets_by_dealer
+    total_bets_by_player_2 = ten_dollars * 3 + state.big_blind
+    assert state.wealth[2] == initial_wealth - total_bets_by_player_2
+    assert state.wealth[1] == initial_wealth + total_bets_by_player_2
+    assert state.wealth[0] == initial_wealth
 
     assert sum(state.wealth) == initial_wealth * state.n_players
 
     assert len(state.public_cards) == 0
     assert len(state.shuffled_deck) == n_cards_in_deck_after_initial_deal
 
-    # Note: the first person to act in the first round is now the dealer
-    assert state.dealer == initial_dealer + 1 == first_player
+    # Note: the dealer shifts to the next player
+    assert state.dealer == 1
 
     assert all(player_has_folded is False for player_has_folded in state.has_folded)
 
     assert sum(state.wealth) == initial_wealth * state.n_players
-    assert state.wealth[second_player] == initial_wealth + total_bets_by_dealer
 
     action_knock = 0
     action_small_bet = 10
@@ -152,10 +163,10 @@ def test_state():
 
     assert state.game_stage == GameStage.PRE_FLOP
 
-    for _ in range(state.n_players):
-        # Note: all players bet $0 pre-flop (TODO Implement big and small blinds),
-        #  and we move to the next stage
-        state.update(action_knock)
+    # Note: all players bet (or complete) the big blind, and we move to the next stage
+    state.update(state.big_blind)
+    state.update(state.small_blind)
+    state.update(action_knock)
 
     assert state.game_stage == GameStage.FLOP
     assert len(state.public_cards) == 3
@@ -197,5 +208,9 @@ def test_state():
     state.update(action_big_bet - action_small_bet)
 
     # Note: the bets were small during the flop and turn, and big during the river
-    amount_won = (state.n_players - len(winning_players)) * (2 * action_small_bet + action_big_bet) / len(winning_players)
+    amount_won = (
+        (state.n_players - len(winning_players))
+        * (2 * action_small_bet + action_big_bet + state.big_blind)
+        / len(winning_players)
+    )
     assert state.wealth[winning_players[0]] == wealth_before_winning + amount_won

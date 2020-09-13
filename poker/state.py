@@ -29,20 +29,17 @@ class State:
     ):
 
         self.n_players = n_players
-
+        self.big_blind = big_blind
+        self.small_blind = small_blind
         self.wealth = [initial_wealth for player in range(self.n_players)]
+        self.verbose = verbose
 
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
-
-        self.verbose = verbose
 
         if self.verbose:
             print(
                 f"Initialized game with {self.n_players} players each with wealth ${initial_wealth}"
             )
-
-        # TODO Implement small blind and big blind,
-        #  first person to act pre-flop is player after the big blind
 
     def __str__(self):
 
@@ -81,6 +78,11 @@ class State:
         self.bets_by_stage = {
             stage: [[] for player in range(self.n_players)] for stage in GameStage
         }
+
+        # Note: the first player to act is forced to bet the small blind,
+        #  and the second player to act is forced to bet the big blind
+        self.update(self.small_blind)
+        self.update(self.big_blind)
 
     def get_next_player(self, current_player):
 

@@ -14,15 +14,29 @@ class SimpleRandomPlayer:
 
 
 class SimpleQFunctionPlayer:
-    def __init__(self):
+    def __init__(self, player_index=0, actions=[-1, 0, 1]):
 
         n_game_stages = len(GameStage)
         n_cards = len(FULL_DECK)
+
+        self.actions = actions
+        n_actions = len(self.actions)
 
         # Note: this is a very crude (incomplete) representation of the player's state:
         #  It tracks the game stage and the player's hole cards (i.e. their private cards),
         #  and nothing else
         self.q = np.zeros((n_game_stages, n_cards, n_cards, n_actions))
+
+    def get_action(self, state):
+
+        game_stage = state.game_stage
+        first_hole_card = state.hole_cards[self.player_index][0]
+        second_hole_card = state.hole_cards[self.player_index][1]
+
+        argmax_action = np.argmax(
+            self.q[game_stage, first_hole_card_index, second_hole_card_index, :]
+        )
+        return self.actions[argmax_action]
 
 
 def run_game(n_players, n_steps=30):
