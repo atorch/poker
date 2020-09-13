@@ -1,6 +1,6 @@
 from collections import Counter
 
-from poker.cards import FULL_DECK, Suit, Rank, Card
+from poker.cards import Card, FULL_DECK, Rank, Suit
 
 
 def test_card_comparison():

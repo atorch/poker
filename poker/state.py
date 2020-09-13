@@ -5,6 +5,7 @@ import numpy as np
 
 from poker.cards import Suit, Rank, Card, FULL_DECK
 from poker.hands import best_hand_strength
+from poker.utils import argmax
 
 
 class GameStage(IntEnum):
@@ -24,15 +25,21 @@ class State:
         small_blind=1,
         initial_dealer=0,
         verbose=False,
+        deck=None,
     ):
 
         self.n_players = n_players
 
         self.wealth = [initial_wealth for player in range(self.n_players)]
 
-        self.initialize_pre_flop(dealer=initial_dealer)
+        self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
         self.verbose = verbose
+
+        if self.verbose:
+            print(
+                f"Initialized game with {self.n_players} players each with wealth ${initial_wealth}"
+            )
 
         # TODO Implement small blind and big blind,
         #  first person to act pre-flop is player after the big blind
@@ -49,9 +56,12 @@ class State:
 
         return total
 
-    def initialize_pre_flop(self, dealer):
+    def initialize_pre_flop(self, dealer, deck=None):
 
-        self.shuffled_deck = sample(FULL_DECK, k=len(FULL_DECK))
+        if deck is None:
+            self.shuffled_deck = sample(FULL_DECK, k=len(FULL_DECK))
+        else:
+            self.shuffled_deck = deck
 
         self.public_cards = []
 
@@ -124,11 +134,9 @@ class State:
             if self.verbose:
                 print(f"Player {self.current_player} bets ${action}")
 
-    def redistribute_wealth_and_reinitialize(self, winning_player):
+    def redistribute_wealth_and_reinitialize(self, winning_players):
 
-        losing_players = [
-            player for player in range(self.n_players) if player != winning_player
-        ]
+        losing_players = set(range(self.n_players)).difference(winning_players)
 
         for losing_player in losing_players:
 
@@ -136,8 +144,16 @@ class State:
                 total_bet_by_losing_player = sum(
                     self.bets_by_stage[stage][losing_player]
                 )
-                self.wealth[winning_player] += total_bet_by_losing_player
                 self.wealth[losing_player] -= total_bet_by_losing_player
+
+                for winning_player in winning_players:
+                    # Note: if there are multiple winning players, they split the pot
+                    self.wealth[winning_player] += total_bet_by_losing_player / len(
+                        winning_players
+                    )
+
+        if self.verbose:
+            print(f"Player wealths are now {self.wealth}")
 
         # Now that we have redistributed wealth, we assign a new dealer,
         #  deal new cards and go back to the initial stage
@@ -165,6 +181,20 @@ class State:
 
         return hand_strengths, hand_descriptions
 
+    def move_to_next_stage(self):
+
+        self.game_stage = list(GameStage)[self.game_stage + 1]
+
+        # Note: after moving to the next stage, the first person to act is
+        #  the first person left of the dealer (ignoring players who have already folded)
+        self.current_player = self.get_next_player(self.dealer)
+
+        if self.game_stage == GameStage.FLOP:
+            self.public_cards.extend(self.deal_k_cards(3))
+
+        elif self.game_stage == GameStage.TURN or self.game_stage == GameStage.RIVER:
+            self.public_cards.extend(self.deal_k_cards(1))
+
     def update(self, action):
 
         if self.verbose:
@@ -180,19 +210,7 @@ class State:
 
             if self.game_stage <= GameStage.TURN:
 
-                self.game_stage = list(GameStage)[self.game_stage + 1]
-
-                # Note: after moving to the next stage, the first person to act is
-                #  the first person left of the dealer (ignoring players who have already folded)
-                self.current_player = self.get_next_player(self.dealer)
-
-                if self.game_stage == GameStage.FLOP:
-                    self.public_cards.extend(self.deal_k_cards(3))
-                elif (
-                    self.game_stage == GameStage.TURN
-                    or self.game_stage == GameStage.RIVER
-                ):
-                    self.public_cards.extend(self.deal_k_cards(1))
+                self.move_to_next_stage()
 
             else:
 
@@ -202,29 +220,31 @@ class State:
 
                 # TODO This is incorrect if there are ties (multiple players with the same hand),
                 #  in which case the winners split the pot
-                winning_player = np.argmax(hand_strengths)
+                winning_players = argmax(hand_strengths)
 
                 if self.verbose:
-                    print(f"Hand strengths: {hand_strengths}")
-                    winning_hand_description = hand_descriptions[winning_player]
+                    print(f"Hands: {hand_descriptions}")
+                    winning_hand_description = hand_descriptions[winning_players[0]]
                     print(
-                        f"Player {winning_player} wins the hand with a {winning_hand_description} (hand strength {max(hand_strengths)})"
+                        f"Player(s) {winning_players} win the hand with {winning_hand_description} (hand strength {max(hand_strengths)})"
                     )
                     print(f"Public cards: {self.public_cards}")
                     print(f"Hole cards: {self.hole_cards}")
 
-                self.redistribute_wealth_and_reinitialize(winning_player)
+                self.redistribute_wealth_and_reinitialize(winning_players)
 
         elif over_due_to_folding:
 
-            winning_player = next_player
-
             if self.verbose:
                 print(
-                    f"Player {winning_player} wins the hand because everyone else has folded"
+                    f"Player {next_player} wins the hand because everyone else has folded"
                 )
 
-            self.redistribute_wealth_and_reinitialize(winning_player)
+            winning_players = [next_player]
+            self.redistribute_wealth_and_reinitialize(winning_players)
 
         else:
+
+            # Note: in this case, the current stage is not over
+            #  and it is the next player's turn to act
             self.current_player = next_player

@@ -53,43 +53,42 @@ def strength(hand):
 
         if straight:
             # Straight flush (ties broken by the rank of the last card in the straight)
-            return 1000 + straight_tiebreaker, "straight flush"
+            return 1000 + straight_tiebreaker, "a straight flush"
 
         # Regular flush (ties broken by the rank of the high card)
-        return 500 + sorted_hand[-1].rank, "flush"
+        description = f"a {hand[0].suit.name} flush"
+        return 500 + sorted_hand[-1].rank, description
 
     rank_counter = Counter([card.rank for card in hand])
     most_common_ranks = rank_counter.most_common()
 
     first_most_common_rank = most_common_ranks[0][0]
+    second_most_common_rank = most_common_ranks[1][0]
     first_most_common_count = most_common_ranks[0][1]
     second_most_common_count = most_common_ranks[1][1]
 
     if first_most_common_count == 4:
-        # Four of a kind (with ties broken by rank)
-        # TODO Are rank ties broken by the fifth card (the kicker?)
-        return 700 + first_most_common_rank, "four of a kind"
+        description = f"four {first_most_common_rank.name}"
+        return 700 + first_most_common_rank, description
 
     if first_most_common_count == 3 and second_most_common_count == 2:
-        # Full house
-        return 600 + first_most_common_rank, "full house"
+        description = f"a full house ({first_most_common_rank.name} full of {second_most_common_rank.name})"
+        return 600 + first_most_common_rank, description
 
     if straight:
-        # Regular straight
-        return 400 + straight_tiebreaker, "straight"
+        description = f"a straight ending in a {straight_tiebreaker.name}"
+        return 400 + straight_tiebreaker, description
 
     if first_most_common_count == 3:
-        # Three of a kind (with ties broken by rank)
-        # TODO Do Texas holdem rules break ties using the kicker?
-        return 300 + first_most_common_rank, "three of a kind"
+        description = f"three of a kind ({first_most_common_rank.name})"
+        return 300 + first_most_common_rank, description
 
     if first_most_common_count == 2 and second_most_common_count == 2:
-        # Two pair (with ties broken first by the rank of the high pair, then by the rank of the low pair)
         return 200, "two pair"
 
     if first_most_common_count == 2:
-        # Pair (with ties broken by the rank of the pair)
-        return 100 + first_most_common_rank, f"pair of {first_most_common_rank.name}"
+        description = f"a pair of {first_most_common_rank.name}"
+        return 100 + first_most_common_rank, description
 
-    # High card
-    return int(sorted_hand[-1].rank), f"high card ({sorted_hand[-1].rank.name})"
+    description = f"an {sorted_hand[-1].rank.name} high"
+    return int(sorted_hand[-1].rank), description

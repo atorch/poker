@@ -1,6 +1,64 @@
 import numpy as np
 
+from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
+
+
+def test_ties():
+
+    initial_wealth = 200
+    initial_dealer = 0
+
+    # Note: there will be a full house (aces and kings) on the board
+    #  Cards are dealt (popped) off of the _end_ of the list
+    deck = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.ACE, Suit.DIAMONDS),
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.KING, Suit.DIAMONDS),
+        Card(Rank.KING, Suit.CLUBS),
+        Card(Rank.TWO, Suit.HEARTS),
+        Card(Rank.SEVEN, Suit.HEARTS),
+        Card(Rank.TWO, Suit.SPADES),
+        Card(Rank.SEVEN, Suit.SPADES),
+        Card(Rank.TWO, Suit.CLUBS),
+        Card(Rank.SEVEN, Suit.CLUBS),
+    ]
+
+    # Note: we pass in a deck so that the order in which cards are dealt is known and deterministic
+    state = State(n_players=3, initial_wealth=initial_wealth, initial_dealer=initial_dealer, deck=deck)
+
+    action_bet = 1
+    action_fold = -1
+
+    for _ in range(state.n_players):
+        state.update(action_bet)
+
+    for _ in range(state.n_players):
+        state.update(action_bet)
+
+    for _ in range(state.n_players):
+        state.update(action_bet)
+
+    assert state.game_stage == GameStage.RIVER
+
+    amount_bet_by_player_who_folds = (
+        sum(state.bets_by_stage[0][state.current_player]) +
+        sum(state.bets_by_stage[1][state.current_player]) +
+        sum(state.bets_by_stage[2][state.current_player])
+    )
+
+    state.update(action_fold)
+    assert state.has_folded[1]
+
+    # Note: the other two players stay in the game. They tie and split the pot
+    state.update(action_bet)
+    state.update(action_bet)
+
+    amount_won_by_each_winner = amount_bet_by_player_who_folds / (state.n_players - 1)
+    assert state.wealth[0] == initial_wealth + amount_won_by_each_winner
+    assert state.wealth[2] == initial_wealth + amount_won_by_each_winner
+    assert sum(state.wealth) == initial_wealth * state.n_players
 
 
 def test_state():

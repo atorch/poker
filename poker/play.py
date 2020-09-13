@@ -1,22 +1,31 @@
 import numpy as np
 
-from poker.state import State
-
-
-ACTION_FOLD = -1
-ACTION_BET = 1
+from poker.cards import FULL_DECK
+from poker.state import GameStage, State
 
 
 class SimpleRandomPlayer:
-    def __init__(self):
-        self.name = "Hi there, I'm Bob"
-
     def get_action(self, state):
 
-        return np.random.choice([ACTION_FOLD, ACTION_BET], p=[0.1, 0.9])
+        action_fold = -1
+        action_bet = 1
+
+        return np.random.choice([action_fold, action_bet], p=[0.1, 0.9])
 
 
-def run_game(n_players, n_steps=20):
+class SimpleQFunctionPlayer:
+    def __init__(self):
+
+        n_game_stages = len(GameStage)
+        n_cards = len(FULL_DECK)
+
+        # Note: this is a very crude (incomplete) representation of the player's state:
+        #  It tracks the game stage and the player's hole cards (i.e. their private cards),
+        #  and nothing else
+        self.q = np.zeros((n_game_stages, n_cards, n_cards, n_actions))
+
+
+def run_game(n_players, n_steps=30):
 
     players = [SimpleRandomPlayer() for _ in range(n_players)]
 
