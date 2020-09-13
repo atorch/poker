@@ -90,5 +90,5 @@ def strength(hand):
         description = f"a pair of {first_most_common_rank.name}"
         return 100 + first_most_common_rank, description
 
-    description = f"an {sorted_hand[-1].rank.name} high"
+    description = f"{sorted_hand[-1].rank.name} high"
     return int(sorted_hand[-1].rank), description

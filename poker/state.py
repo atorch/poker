@@ -20,7 +20,7 @@ class State:
     def __init__(
         self,
         n_players=3,
-        initial_wealth=100,
+        initial_wealth=100.0,
         big_blind=2,
         small_blind=1,
         initial_dealer=0,

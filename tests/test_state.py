@@ -1,12 +1,11 @@
-import numpy as np
-
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
+from poker.utils import argmax
 
 
 def test_ties():
 
-    initial_wealth = 200
+    initial_wealth = 200.0
     initial_dealer = 0
 
     # Note: there will be a full house (aces and kings) on the board
@@ -180,9 +179,11 @@ def test_state():
     # Note: even though the stage has not ended, all public cards have
     #  been dealt and we can calculate hand strengths
     hand_strengths, hand_descriptions = state.calculate_best_hand_strengths()
-    winning_player = np.argmax(hand_strengths)
+    winning_players = argmax(hand_strengths)
 
-    wealth_before_winning = state.wealth[winning_player]
+    # Note: there may be multiple winning players (a tie)
+    #  We assert on the first winning player's wealth
+    wealth_before_winning = state.wealth[winning_players[0]]
 
     # Note: no players have folded, so all hand strengths must be positive
     assert max(hand_strengths) > 0
@@ -196,5 +197,5 @@ def test_state():
     state.update(action_big_bet - action_small_bet)
 
     # Note: the bets were small during the flop and turn, and big during the river
-    amount_won = (state.n_players - 1) * (2 * action_small_bet + action_big_bet)
-    assert state.wealth[winning_player] == wealth_before_winning + amount_won
+    amount_won = (state.n_players - len(winning_players)) * (2 * action_small_bet + action_big_bet) / len(winning_players)
+    assert state.wealth[winning_players[0]] == wealth_before_winning + amount_won
