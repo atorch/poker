@@ -1,6 +1,6 @@
 from collections import Counter
 
-from poker.cards import Card, FULL_DECK, Rank, Suit
+from poker.cards import Card, card_index, FULL_DECK, Rank, Suit
 
 
 def test_card_comparison():
@@ -34,3 +34,9 @@ def test_deck():
 
     for rank in Rank:
         assert rank_counter[rank] == 4
+
+
+def test_card_index():
+
+    for index, card in enumerate(FULL_DECK):
+        assert index == card_index(card)

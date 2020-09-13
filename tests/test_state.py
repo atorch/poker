@@ -3,6 +3,26 @@ from poker.state import GameStage, State
 from poker.utils import argmax
 
 
+def test_minimum_legal_bet():
+
+    initial_dealer = 0
+
+    state = State(n_players=3)
+
+    # Note: the first person to act is the player after the big blind,
+    #  and their minimum legal bet is therefore the big blind amount
+    assert state.minimum_legal_bet() == state.big_blind
+
+    state.update(-1)
+
+    min_legal_bet = state.minimum_legal_bet()
+    assert min_legal_bet == (state.big_blind - state.small_blind)
+    state.update(min_legal_bet)
+
+    # Note: the big blind is allowed to bet zero dollars (to "knock")
+    assert state.minimum_legal_bet() == 0
+
+
 def test_ties():
 
     initial_wealth = 200.0

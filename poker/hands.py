@@ -7,7 +7,7 @@ from poker.cards import Rank
 
 def sort_hand(hand):
 
-    return sorted(hand, key=attrgetter("rank"))
+    return sorted(hand, key=attrgetter("rank", "suit"))
 
 
 def is_straight(sorted_hand):

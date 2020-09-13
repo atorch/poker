@@ -2,7 +2,7 @@ from collections import namedtuple
 from enum import Enum, IntEnum
 
 
-class Suit(Enum):
+class Suit(IntEnum):
 
     # Note: suits are all of equal value in poker:
     #  no suit is stronger than any other
@@ -15,19 +15,19 @@ class Suit(Enum):
 class Rank(IntEnum):
 
     # Note: aces are strongest, but can also be used as the low card in straights
-    TWO = 2
-    THREE = 3
-    FOUR = 4
-    FIVE = 5
-    SIX = 6
-    SEVEN = 7
-    EIGHT = 8
-    NINE = 9
-    TEN = 10
-    JACK = 11
-    QUEEN = 12
-    KING = 13
-    ACE = 14
+    TWO = 0
+    THREE = 1
+    FOUR = 2
+    FIVE = 3
+    SIX = 4
+    SEVEN = 5
+    EIGHT = 6
+    NINE = 7
+    TEN = 8
+    JACK = 9
+    QUEEN = 10
+    KING = 11
+    ACE = 12
 
 
 class Card:
@@ -39,8 +39,12 @@ class Card:
         return self.rank == other.rank and self.suit == other.suit
 
     def __repr__(self):
-        # Example: "SIX of Suit.HEARTS"
-        return f"{self.rank.name} of {self.suit}"
+        # Example: "SIX of HEARTS"
+        return f"{self.rank.name} of {self.suit.name}"
 
 
 FULL_DECK = tuple(Card(rank, suit) for rank in Rank for suit in Suit)
+
+
+def card_index(card):
+    return card.suit + card.rank * len(Suit)

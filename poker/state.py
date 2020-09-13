@@ -4,7 +4,7 @@ from random import sample
 import numpy as np
 
 from poker.cards import Suit, Rank, Card, FULL_DECK
-from poker.hands import best_hand_strength
+from poker.hands import best_hand_strength, sort_hand
 from poker.utils import argmax
 
 
@@ -34,12 +34,12 @@ class State:
         self.wealth = [initial_wealth for player in range(self.n_players)]
         self.verbose = verbose
 
-        self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
-
         if self.verbose:
             print(
                 f"Initialized game with {self.n_players} players each with wealth ${initial_wealth}"
             )
+
+        self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
     def __str__(self):
 
@@ -81,6 +81,9 @@ class State:
 
         # Note: the first player to act is forced to bet the small blind,
         #  and the second player to act is forced to bet the big blind
+        # TODO Forcing the player to act in this way might create odd results for Q function
+        #  and for rewards. Might be better to let the player act but _constrain_ their
+        #  actions so that they are forced to play the blinds
         self.update(self.small_blind)
         self.update(self.big_blind)
 
@@ -103,7 +106,26 @@ class State:
 
     def deal_hole_cards(self):
 
-        return [self.deal_k_cards(2) for player in range(self.n_players)]
+        # Note: we sort the hole cards to reduce number of duplicate states
+        #  The order of a player's hole cards does not affect the strength of their hand
+        return [sort_hand(self.deal_k_cards(2)) for player in range(self.n_players)]
+
+    def minimum_legal_bet(self):
+
+        total_bet_current_player = sum(
+            self.bets_by_stage[self.game_stage][self.current_player]
+        )
+
+        # Note: we want the previous player who has not folded
+        previous_player = (self.current_player - 1) % self.n_players
+        while self.has_folded[previous_player]:
+            previous_player = (previous_player - 1) % self.n_players
+
+        total_bet_previous_player = sum(
+            self.bets_by_stage[self.game_stage][previous_player]
+        )
+
+        return total_bet_previous_player - total_bet_current_player
 
     def stage_is_complete(self, next_player):
 
@@ -119,11 +141,13 @@ class State:
         )
         total_bet_next_player = sum(self.bets_by_stage[self.game_stage][next_player])
 
+        # TODO This is incorrect pre-flop, when the big blind is allowed to raise
         return total_bet_current_player == total_bet_next_player
 
     def update_has_folded_or_bets(self, action):
 
         if action < 0:
+
             # Note: negative bets indicate that the player is folding
             self.has_folded[self.current_player] = True
 
@@ -131,6 +155,10 @@ class State:
                 print(f"Player {self.current_player} folds")
 
         else:
+
+            minimum_legal_bet = self.minimum_legal_bet()
+            assert action >= minimum_legal_bet
+
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
 
             if self.verbose:
