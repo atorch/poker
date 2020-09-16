@@ -41,6 +41,8 @@ class State:
 
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
+        self.terminal = False
+
     def __str__(self):
 
         return f"State: game stage {self.game_stage.name}, total pot ${self.total_bets()}, player {self.current_player} is next to act"
@@ -171,10 +173,15 @@ class State:
         for losing_player in losing_players:
 
             for stage in GameStage:
+
                 total_bet_by_losing_player = sum(
                     self.bets_by_stage[stage][losing_player]
                 )
                 self.wealth[losing_player] -= total_bet_by_losing_player
+
+                if self.wealth[losing_player] <= 0:
+                    # Note: for simplicity, the game ends as soon as any player runs out of money
+                    self.terminal = True
 
                 for winning_player in winning_players:
                     # Note: if there are multiple winning players, they split the pot
@@ -224,6 +231,9 @@ class State:
 
         elif self.game_stage == GameStage.TURN or self.game_stage == GameStage.RIVER:
             self.public_cards.extend(self.deal_k_cards(1))
+
+        if self.verbose:
+            print(f"Public cards are {self.public_cards}")
 
     def update(self, action):
 

@@ -23,6 +23,8 @@ class SimpleQFunctionPlayer:
 
     def get_private_state(self, game_state):
 
+        # Note: this is an index into the player's Q function
+        #  The player is _not_ allowed to see the other player's private cards!
         game_stage = game_state.game_stage
         first_hole_card = game_state.hole_cards[self.player_index][0]
         second_hole_card = game_state.hole_cards[self.player_index][1]
@@ -53,6 +55,8 @@ class SimpleQFunctionPlayer:
 
         minimum_legal_bet = game_state.minimum_legal_bet()
 
+        # TODO Maximum legal bet is the player's wealth
+
         if np.random.uniform() < proba_random_action:
 
             action_index = self.random_legal_action_index(minimum_legal_bet)
@@ -67,31 +71,14 @@ class SimpleQFunctionPlayer:
         action_index = np.argmax(q_at_private_state)
         return self.actions[action_index], action_index
 
+    def update_q(self, private_state, action_index, updated_guess_for_q, learning_rate):
+
+        self.q[private_state][action_index] = self.q[private_state][
+            action_index
+        ] + learning_rate * (updated_guess_for_q - self.q[private_state][action_index])
+
 
 def describe_learned_q_function(q):
-
-    # Note: the value function takes the max over actions (the last index in the q function)
-    value = np.max(q, axis=-1)
-
-    argmax_value = np.argmax(value)
-    argmax_value = np.unravel_index(argmax_value, value.shape)
-
-    print(f"Argmax of value function: {argmax_value} with value {value[argmax_value]}")
-    first_card_index = argmax_value[0]
-    second_card_index = argmax_value[1]
-    print(
-        f"Hole cards at argmax of value: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    )
-
-    argmin_value = np.argmin(value)
-    argmin_value = np.unravel_index(argmin_value, value.shape)
-
-    print(f"Argmin of value function: {argmin_value} with value {value[argmin_value]}")
-    first_card_index = argmin_value[0]
-    second_card_index = argmin_value[1]
-    print(
-        f"Hole cards at argmin of value: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    )
 
     argmax_q = np.argmax(q)
     argmax_q = np.unravel_index(argmax_q, q.shape)
@@ -113,91 +100,100 @@ def describe_learned_q_function(q):
         f"Hole cards at argmin of Q: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
     )
 
+    # Note: the value function takes the max over actions (the last index in the q function)
+    value = np.max(q, axis=-1)
+
+    argmin_value = np.argmin(value)
+    argmin_value = np.unravel_index(argmin_value, value.shape)
+
+    print(f"Argmin of value function: {argmin_value} with value {value[argmin_value]}")
+    first_card_index = argmin_value[0]
+    second_card_index = argmin_value[1]
+    print(
+        f"Hole cards at argmin of value: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
+    )
+
     index_ace_hearts = card_index(Card(Rank.ACE, Suit.HEARTS))
     index_ace_clubs = card_index(Card(Rank.ACE, Suit.CLUBS))
 
     q_with_ace = q[GameStage.RIVER, index_ace_hearts, index_ace_clubs, :]
     print(f"Q function at the river with two aces (hearts and clubs): {q_with_ace}")
 
-    # Note: in this naive implementation, these two states are treated differently,
-    #  even though they should be identical (because the order of your private cards does not matter)
-    # TODO Only one of these is possible with sorting
-    q_with_ace = q[GameStage.RIVER, index_ace_clubs, index_ace_hearts, :]
-    print(f"Q function at the river with two aces (clubs and hearts): {q_with_ace}")
 
-
-def run_sarsa(n_players, n_steps=100, learning_rate=0.01):
+def run_sarsa(n_players, n_episodes=1000, learning_rate=0.01):
 
     # This is (roughly) Sutton and Barto Figure 6.9
 
     players = [SimpleQFunctionPlayer(player_index) for player_index in range(n_players)]
 
-    initial_wealth = 100
-    state = State(n_players=n_players, initial_wealth=initial_wealth, verbose=True)
+    for episode in range(n_episodes):
 
-    learning_player = state.current_player
+        initial_wealth = 100
+        state = State(n_players=n_players, initial_wealth=initial_wealth, verbose=False)
 
-    private_state = players[learning_player].get_private_state(state)
-    action, action_index = players[learning_player].get_action(state)
+        learning_player = state.current_player
 
-    cumulative_reward = 0
+        private_state = players[learning_player].get_private_state(state)
+        action, action_index = players[learning_player].get_action(state)
 
-    for step in range(n_steps):
+        cumulative_reward = 0
 
-        # if step % 100_000 == 0:
-        #     print(step)
+        for player_index in range(n_players):
+            if player_index != learning_player:
+                # Note: at the beginning of every episode, we push updates to the q function
+                #  from the learning player to all other players
+                players[player_index].q = players[learning_player].q.copy()
 
-        wealth_before_action = state.wealth[learning_player]
+        while not state.terminal:
 
-        # TODO Need to check whether state is terminal,
-        #  For example, you just folded your last dollar and you are out of the game
-        #  If so, there is no continuation value
-        state.update(action)
+            wealth_before_action = state.wealth[learning_player]
 
-        # Note: we need to make the other players act so that we can get back to the learning player
-        #  Even though the other (non-learning) players are acting, it
-        #  is possible that the learning player is forced
-        #  to act (bet the small blind or big blind) in this block
-        while state.current_player != learning_player:
-
-            action, _ = players[state.current_player].get_action(state)
             state.update(action)
 
-        # Note: we calculate the player's reward _after_ the other players act
-        # TODO This can create odd rewards when the other players fold and
-        #  the learning player is either small or big blind in the next round
-        wealth_after_action = state.wealth[learning_player]
-        reward = wealth_after_action - wealth_before_action
-        cumulative_reward += reward
-        print(f" *** Reward for player {learning_player} is ${reward} ***")
+            # Note: we need to make the other players act so that we can get back to the learning player
+            #  Even though the other (non-learning) players are acting, it
+            #  is possible that the learning player is forced
+            #  to act (bet the small blind or big blind) in this block
+            while state.current_player != learning_player:
 
-        # TODO Put this in pytest
-        assert state.wealth[learning_player] == initial_wealth + cumulative_reward
+                action, _ = players[state.current_player].get_action(state)
+                state.update(action)
 
-        next_private_state = players[learning_player].get_private_state(state)
+            # Note: we calculate the player's reward _after_ the other players act
+            # TODO This can create odd rewards when the other players fold and
+            #  the learning player is either small or big blind in the next round
+            wealth_after_action = state.wealth[learning_player]
+            reward = wealth_after_action - wealth_before_action
+            cumulative_reward += reward
+            # print(f" *** Reward for player {learning_player} is ${reward} ***")
 
-        # TODO Probability of random action needs to decrease#
-        #  over time, as the player learns their Q function
-        next_action, next_action_index = players[learning_player].get_action(state)
+            # TODO Put this in pytest
+            assert state.wealth[learning_player] == initial_wealth + cumulative_reward
 
-        continuation_value = players[learning_player].q[next_private_state][
-            next_action_index
-        ]
+            next_private_state = players[learning_player].get_private_state(state)
 
-        # TODO Need to check whether next state is terminal
-        #  If so, there is no continuation value
-        updated_guess_for_q = reward + continuation_value
+            # TODO Probability of random action needs to decrease
+            #  over time, as the player learns their Q function
+            next_action, next_action_index = players[learning_player].get_action(state)
 
-        players[learning_player].q[private_state][action_index] = players[
-            learning_player
-        ].q[private_state][action_index] + learning_rate * (
-            updated_guess_for_q
-            - players[learning_player].q[private_state][action_index]
-        )
+            continuation_value = players[learning_player].q[next_private_state][
+                next_action_index
+            ]
 
-        action = next_action
-        action_index = next_action_index
-        private_state = next_private_state
+            if state.terminal:
+                print(f"Reached a terminal state: player wealths are {state.wealth}")
+                updated_guess_for_q = reward
+
+            else:
+                updated_guess_for_q = reward + continuation_value
+
+            players[learning_player].update_q(
+                private_state, action_index, updated_guess_for_q, learning_rate
+            )
+
+            action = next_action
+            action_index = next_action_index
+            private_state = next_private_state
 
     describe_learned_q_function(players[learning_player].q)
 
