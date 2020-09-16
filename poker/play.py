@@ -34,11 +34,13 @@ class SimpleQFunctionPlayer:
 
         return game_stage, first_hole_card_index, second_hole_card_index
 
-    def random_legal_action_index(self, minimum_legal_bet):
+    def random_legal_action_index(self, minimum_legal_bet, maximum_legal_bet):
 
         action_probabilities = []
         for action in self.actions:
-            if action < 0 or (action >= 0 and action >= minimum_legal_bet):
+
+            # Note: negative actions indicate folding, which is always a legal action
+            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
                 action_probabilities.append(1.0)
             else:
                 action_probabilities.append(0.0)
@@ -55,15 +57,23 @@ class SimpleQFunctionPlayer:
 
         minimum_legal_bet = game_state.minimum_legal_bet()
 
-        # TODO Maximum legal bet is the player's wealth
+        total_bet_so_far = sum(
+            sum(game_state.bets_by_stage[stage][self.player_index])
+            for stage in GameStage
+        )
+        maximum_legal_bet = game_state.wealth[self.player_index] - total_bet_so_far
 
         if np.random.uniform() < proba_random_action:
 
-            action_index = self.random_legal_action_index(minimum_legal_bet)
+            action_index = self.random_legal_action_index(
+                minimum_legal_bet, maximum_legal_bet
+            )
             return self.actions[action_index], action_index
 
         for index, action in enumerate(self.actions):
-            if action >= 0 and action < minimum_legal_bet:
+            if (action >= 0 and action < minimum_legal_bet) or (
+                action > maximum_legal_bet
+            ):
                 # Note: we temporarily set q to -Inf at illegal actions, so that
                 #  those actions cannot be returned by argmax
                 q_at_private_state[index] = -np.inf
@@ -83,22 +93,18 @@ def describe_learned_q_function(q):
     argmax_q = np.argmax(q)
     argmax_q = np.unravel_index(argmax_q, q.shape)
 
-    print(f"Argmax of Q: {argmax_q} with value {q[argmax_q]}")
     first_card_index = argmax_q[0]
     second_card_index = argmax_q[1]
-    print(
-        f"Hole cards at argmax of Q: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    )
+    hole_cards = f"{FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
+    print(f"Argmax of Q: {argmax_q} with value {q[argmax_q]}, hole cards {hole_cards}")
 
     argmin_q = np.argmin(q)
     argmin_q = np.unravel_index(argmin_q, q.shape)
 
-    print(f"Argmin of Q: {argmin_q} with value {q[argmin_q]}")
     first_card_index = argmin_q[0]
     second_card_index = argmin_q[1]
-    print(
-        f"Hole cards at argmin of Q: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    )
+    hole_cards = f"{FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
+    print(f"Argmin of Q: {argmin_q} with value {q[argmin_q]}, hole cards {hole_cards}")
 
     # Note: the value function takes the max over actions (the last index in the q function)
     value = np.max(q, axis=-1)
@@ -106,21 +112,24 @@ def describe_learned_q_function(q):
     argmin_value = np.argmin(value)
     argmin_value = np.unravel_index(argmin_value, value.shape)
 
-    print(f"Argmin of value function: {argmin_value} with value {value[argmin_value]}")
     first_card_index = argmin_value[0]
     second_card_index = argmin_value[1]
     print(
-        f"Hole cards at argmin of value: {FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
+        f"Argmin of value function: {argmin_value} with value {value[argmin_value]}, hole cards {hole_cards}"
     )
 
     index_ace_hearts = card_index(Card(Rank.ACE, Suit.HEARTS))
     index_ace_clubs = card_index(Card(Rank.ACE, Suit.CLUBS))
+    index_ace_spades = card_index(Card(Rank.ACE, Suit.SPADES))
 
     q_with_ace = q[GameStage.RIVER, index_ace_hearts, index_ace_clubs, :]
     print(f"Q function at the river with two aces (hearts and clubs): {q_with_ace}")
 
+    q_with_ace = q[GameStage.RIVER, index_ace_hearts, index_ace_spades, :]
+    print(f"Q function at the river with two aces (hearts and spades): {q_with_ace}")
 
-def run_sarsa(n_players, n_episodes=1000, learning_rate=0.01):
+
+def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
 
     # This is (roughly) Sutton and Barto Figure 6.9
 
@@ -128,13 +137,18 @@ def run_sarsa(n_players, n_episodes=1000, learning_rate=0.01):
 
     for episode in range(n_episodes):
 
+        # Note: the probability of random (exploratory) actions decreases over time
+        proba_random_action = 0.02 + 0.98 * np.exp(-episode / 1000)
+
         initial_wealth = 100
         state = State(n_players=n_players, initial_wealth=initial_wealth, verbose=False)
 
         learning_player = state.current_player
 
         private_state = players[learning_player].get_private_state(state)
-        action, action_index = players[learning_player].get_action(state)
+        action, action_index = players[learning_player].get_action(
+            state, proba_random_action
+        )
 
         cumulative_reward = 0
 
@@ -156,8 +170,14 @@ def run_sarsa(n_players, n_episodes=1000, learning_rate=0.01):
             #  to act (bet the small blind or big blind) in this block
             while state.current_player != learning_player:
 
-                action, _ = players[state.current_player].get_action(state)
+                action, _ = players[state.current_player].get_action(
+                    state, proba_random_action
+                )
                 state.update(action)
+
+                # TODO Is this needed?
+                if state.terminal:
+                    break
 
             # Note: we calculate the player's reward _after_ the other players act
             # TODO This can create odd rewards when the other players fold and
@@ -172,9 +192,9 @@ def run_sarsa(n_players, n_episodes=1000, learning_rate=0.01):
 
             next_private_state = players[learning_player].get_private_state(state)
 
-            # TODO Probability of random action needs to decrease
-            #  over time, as the player learns their Q function
-            next_action, next_action_index = players[learning_player].get_action(state)
+            next_action, next_action_index = players[learning_player].get_action(
+                state, proba_random_action
+            )
 
             continuation_value = players[learning_player].q[next_private_state][
                 next_action_index

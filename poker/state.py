@@ -86,6 +86,7 @@ class State:
         # TODO Forcing the player to act in this way might create odd results for Q function
         #  and for rewards. Might be better to let the player act but _constrain_ their
         #  actions so that they are forced to play the blinds
+        # TODO Players with low wealth are sometimes forced to bet more than they have available!
         self.update(self.small_blind)
         self.update(self.big_blind)
 
