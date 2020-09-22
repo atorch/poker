@@ -3,6 +3,99 @@ from poker.state import GameStage, State
 from poker.utils import argmax
 
 
+def test_state_with_low_wealth():
+
+    initial_wealth = 5
+    big_blind = 2
+    small_blind = 1
+
+    # Note: cards are dealt (popped) off of the _end_ of the list
+    deck = [
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.KING, Suit.DIAMONDS),
+        Card(Rank.KING, Suit.CLUBS),
+        Card(Rank.THREE, Suit.HEARTS),
+        Card(Rank.NINE, Suit.CLUBS),
+        Card(Rank.TWO, Suit.SPADES),
+        Card(Rank.SEVEN, Suit.SPADES),
+        Card(Rank.TWO, Suit.CLUBS),
+        Card(Rank.SEVEN, Suit.CLUBS),
+        Card(Rank.TWO, Suit.DIAMONDS),
+        Card(Rank.SEVEN, Suit.DIAMONDS),
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.ACE, Suit.DIAMONDS),
+    ]
+
+    state = State(
+        n_players=4,
+        initial_wealth=initial_wealth,
+        big_blind=big_blind,
+        small_blind=small_blind,
+        deck=deck,
+    )
+
+    state.update(big_blind)
+    state.update(big_blind)
+
+    # Note: the small blind completes
+    state.update(big_blind - small_blind)
+    assert state.game_stage == GameStage.FLOP
+
+    for _ in range(state.n_players):
+        state.update(small_blind)
+
+    assert state.game_stage == GameStage.TURN
+
+    for _ in range(state.n_players):
+        state.update(small_blind)
+
+    assert state.game_stage == GameStage.RIVER
+
+    for _ in range(state.n_players):
+        # Note: the players all knock (bet zero)
+        state.update(0)
+
+    # Note: player index 0 had a pair of aces as their hole cards, and they win the round. The next
+    #  player to be big blind has only $1 left (and the big blind is $2), so they are forced to go all in
+    #  as part of the blind
+    assert state.wealth[0] == initial_wealth + (state.n_players - 1) * (
+        big_blind + 2 * small_blind
+    )
+    assert (
+        state.wealth[2]
+        == state.wealth[3]
+        == initial_wealth - (big_blind + 2 * small_blind)
+        == 1
+    )
+
+    assert state.game_stage == GameStage.PRE_FLOP
+
+    state.update(small_blind)
+    state.update(small_blind)
+
+    assert state.game_stage == GameStage.FLOP
+
+    assert state.dealer == 1
+    assert state.current_player == 2
+
+    # Note: the low wealth players are all in, so bets > 0 are not allowed
+    assert state.maximum_legal_bet() == 0
+
+    for _ in range(state.n_players):
+        state.update(0)
+
+    assert state.game_stage == GameStage.TURN
+
+    state.update(0)
+
+    for _ in range(state.n_players - 1):
+        state.update(-1)
+
+    # Note: player 2 wins because everyone else has folded
+    assert state.wealth[2] == 1 + small_blind * (state.n_players - 1)
+    assert state.wealth[3] == 0
+
+
 def test_minimum_legal_bet():
 
     initial_dealer = 0

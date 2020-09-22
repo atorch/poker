@@ -82,13 +82,18 @@ class State:
         }
 
         # Note: the first player to act is forced to bet the small blind,
-        #  and the second player to act is forced to bet the big blind
+        #  and the second player to act is forced to bet the big blind,
+        #  as long as the blinds are not larger than anyone's wealth
         # TODO Forcing the player to act in this way might create odd results for Q function
         #  and for rewards. Might be better to let the player act but _constrain_ their
-        #  actions so that they are forced to play the blinds
-        # TODO Players with low wealth are sometimes forced to bet more than they have available!
-        self.update(self.small_blind)
-        self.update(self.big_blind)
+        #  actions so that they are forced to play the blinds. Does this matter?
+        min_wealth = min(self.wealth)
+
+        small_blind = min(self.small_blind, min_wealth)
+        self.update(small_blind)
+
+        big_blind = min(self.big_blind, min_wealth)
+        self.update(big_blind)
 
     def get_next_player(self, current_player):
 
@@ -112,6 +117,23 @@ class State:
         # Note: we sort the hole cards to reduce number of duplicate states
         #  The order of a player's hole cards does not affect the strength of their hand
         return [sort_hand(self.deal_k_cards(2)) for player in range(self.n_players)]
+
+    def total_bet_by_player(self, player_index):
+
+        return sum(sum(self.bets_by_stage[stage][player_index]) for stage in GameStage)
+
+    def maximum_legal_bet(self):
+
+        # Note: we don't allow bets that would put any non-folded player past all in
+        #  That way, we can keep things simple and ignore side pots (because they can't happen)
+
+        total_bet_by_current_player = self.total_bet_by_player(self.current_player)
+
+        return min(
+            self.wealth[player] - total_bet_by_current_player
+            for player in range(self.n_players)
+            if not self.has_folded[player]
+        )
 
     def minimum_legal_bet(self):
 
@@ -145,13 +167,15 @@ class State:
         total_bet_next_player = sum(self.bets_by_stage[self.game_stage][next_player])
 
         # TODO This is incorrect pre-flop, when the big blind is allowed to raise
+        # TODO Could this lead to an infinite loop / never-ending stage if a player does not have enough wealth to complete the bet?
+        # TODO Pytest edge cases where one player has low (but positive) wealth
         return total_bet_current_player == total_bet_next_player
 
     def update_has_folded_or_bets(self, action):
 
+        # Note: negative bets indicate that the player is folding
         if action < 0:
 
-            # Note: negative bets indicate that the player is folding
             self.has_folded[self.current_player] = True
 
             if self.verbose:
@@ -160,7 +184,10 @@ class State:
         else:
 
             minimum_legal_bet = self.minimum_legal_bet()
-            assert action >= minimum_legal_bet
+            maximum_legal_bet = self.maximum_legal_bet()
+
+            # Note: blow up if the player tries to take an illegal action
+            assert minimum_legal_bet <= action <= maximum_legal_bet
 
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
 

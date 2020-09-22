@@ -56,12 +56,7 @@ class SimpleQFunctionPlayer:
         q_at_private_state = self.q[private_state].copy()
 
         minimum_legal_bet = game_state.minimum_legal_bet()
-
-        total_bet_so_far = sum(
-            sum(game_state.bets_by_stage[stage][self.player_index])
-            for stage in GameStage
-        )
-        maximum_legal_bet = game_state.wealth[self.player_index] - total_bet_so_far
+        maximum_legal_bet = game_state.maximum_legal_bet()
 
         if np.random.uniform() < proba_random_action:
 
@@ -71,9 +66,7 @@ class SimpleQFunctionPlayer:
             return self.actions[action_index], action_index
 
         for index, action in enumerate(self.actions):
-            if (action >= 0 and action < minimum_legal_bet) or (
-                action > maximum_legal_bet
-            ):
+            if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
                 # Note: we temporarily set q to -Inf at illegal actions, so that
                 #  those actions cannot be returned by argmax
                 q_at_private_state[index] = -np.inf
