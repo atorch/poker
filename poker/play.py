@@ -19,12 +19,20 @@ class QFunctionPlayer:
         first_hole_card = Card(Rank.ACE, Suit.HEARTS)
         second_hole_card = Card(Rank.ACE, Suit.CLUBS)
 
-        private_state = GameStage.RIVER, first_hole_card.rank, first_hole_card.suit, second_hole_card.rank, second_hole_card.suit
+        private_state = (
+            GameStage.RIVER,
+            first_hole_card.rank,
+            first_hole_card.suit,
+            second_hole_card.rank,
+            second_hole_card.suit,
+        )
 
         for action in self.actions:
 
             q = self.predicted_q(private_state, action)
-            print(f"Q function at the river with two aces (hearts and clubs), action {action}: {q}")
+            print(
+                f"Q function at the river with two aces (hearts and clubs), action {action}: {q}"
+            )
 
     def get_private_state(self, game_state):
 
@@ -34,7 +42,13 @@ class QFunctionPlayer:
         first_hole_card = game_state.hole_cards[self.player_index][0]
         second_hole_card = game_state.hole_cards[self.player_index][1]
 
-        return game_stage, first_hole_card.rank, first_hole_card.suit, second_hole_card.rank, second_hole_card.suit
+        return (
+            game_stage,
+            first_hole_card.rank,
+            first_hole_card.suit,
+            second_hole_card.rank,
+            second_hole_card.suit,
+        )
 
     def random_legal_action(self, minimum_legal_bet, maximum_legal_bet):
 
@@ -71,7 +85,9 @@ class QFunctionPlayer:
         model_input = self.get_model_input(private_state, action)
         y = np.array([updated_guess_for_q])
 
-        self.model.fit(x=model_input, y=y, epochs=1, batch_size=1, steps_per_epoch=1, verbose=0)
+        self.model.fit(
+            x=model_input, y=y, epochs=1, batch_size=1, steps_per_epoch=1, verbose=0
+        )
 
     def get_action(self, game_state, proba_random_action=0.8):
 
@@ -80,9 +96,7 @@ class QFunctionPlayer:
 
         if np.random.uniform() < proba_random_action:
 
-            return self.random_legal_action(
-                minimum_legal_bet, maximum_legal_bet
-            )
+            return self.random_legal_action(minimum_legal_bet, maximum_legal_bet)
 
         for index, action in enumerate(self.actions):
 
@@ -91,7 +105,9 @@ class QFunctionPlayer:
 
             # TODO Put this in a function
             model_input = np.zeros((len(self.actions), 6))
-            model_input[0:len(self.actions), 0:5] = np.repeat(private_state, len(self.actions), 0)
+            model_input[0 : len(self.actions), 0:5] = np.repeat(
+                private_state, len(self.actions), 0
+            )
             model_input[:, 5] = self.actions
 
             # Note: the model returns predicted action-values of shape (len(self.actions), 1)
@@ -125,9 +141,7 @@ def run_sarsa(n_players, n_episodes=2):
         learning_player = state.current_player
 
         private_state = players[learning_player].get_private_state(state)
-        action = players[learning_player].get_action(
-            state, proba_random_action
-        )
+        action = players[learning_player].get_action(state, proba_random_action)
 
         cumulative_reward = 0
 
@@ -176,7 +190,9 @@ def run_sarsa(n_players, n_episodes=2):
                 state, proba_random_action
             )
 
-            continuation_value = players[learning_player].predicted_q(next_private_state, next_action)
+            continuation_value = players[learning_player].predicted_q(
+                next_private_state, next_action
+            )
 
             if state.terminal:
                 print(f"Reached a terminal state: player wealths are {state.wealth}")

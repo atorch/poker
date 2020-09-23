@@ -14,7 +14,7 @@ def get_q_function_model(n_actions, n_inputs=6, n_units=32):
     #  Is the input simply a vector of length (6, ), with the action in the last index?
     # TODO Add public cards, total bets so far, etc to private state
 
-    input_layer = Input(shape=(n_inputs, ))
+    input_layer = Input(shape=(n_inputs,))
 
     layer1 = Dense(n_units, activation="relu")(input_layer)
     layer2 = Dense(n_units, activation="relu")(layer1)
