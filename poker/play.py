@@ -14,57 +14,105 @@ class QFunctionPlayer:
 
         self.model = get_q_function_model(n_actions=len(self.actions))
 
+    def describe_learned_q_function(self):
 
-def describe_learned_q_function(q):
+        first_hole_card = Card(Rank.ACE, Suit.HEARTS)
+        second_hole_card = Card(Rank.ACE, Suit.CLUBS)
 
-    argmax_q = np.argmax(q)
-    argmax_q = np.unravel_index(argmax_q, q.shape)
+        private_state = GameStage.RIVER, first_hole_card.rank, first_hole_card.suit, second_hole_card.rank, second_hole_card.suit
 
-    first_card_index = argmax_q[0]
-    second_card_index = argmax_q[1]
-    hole_cards = f"{FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    print(f"Argmax of Q: {argmax_q} with value {q[argmax_q]}, hole cards {hole_cards}")
+        for action in self.actions:
 
-    argmin_q = np.argmin(q)
-    argmin_q = np.unravel_index(argmin_q, q.shape)
+            q = self.predicted_q(private_state, action)
+            print(f"Q function at the river with two aces (hearts and clubs), action {action}: {q}")
 
-    first_card_index = argmin_q[0]
-    second_card_index = argmin_q[1]
-    hole_cards = f"{FULL_DECK[first_card_index]}, {FULL_DECK[second_card_index]}"
-    print(f"Argmin of Q: {argmin_q} with value {q[argmin_q]}, hole cards {hole_cards}")
+    def get_private_state(self, game_state):
 
-    # Note: the value function takes the max over actions (the last index in the q function)
-    value = np.max(q, axis=-1)
+        # Note: this is an index into the player's Q function
+        #  The player is _not_ allowed to see the other player's private cards!
+        game_stage = game_state.game_stage
+        first_hole_card = game_state.hole_cards[self.player_index][0]
+        second_hole_card = game_state.hole_cards[self.player_index][1]
 
-    argmin_value = np.argmin(value)
-    argmin_value = np.unravel_index(argmin_value, value.shape)
+        return game_stage, first_hole_card.rank, first_hole_card.suit, second_hole_card.rank, second_hole_card.suit
 
-    first_card_index = argmin_value[0]
-    second_card_index = argmin_value[1]
-    print(
-        f"Argmin of value function: {argmin_value} with value {value[argmin_value]}, hole cards {hole_cards}"
-    )
+    def random_legal_action(self, minimum_legal_bet, maximum_legal_bet):
 
-    index_ace_hearts = card_index(Card(Rank.ACE, Suit.HEARTS))
-    index_ace_clubs = card_index(Card(Rank.ACE, Suit.CLUBS))
-    index_ace_spades = card_index(Card(Rank.ACE, Suit.SPADES))
+        action_probabilities = []
+        for action in self.actions:
 
-    q_with_ace = q[GameStage.RIVER, index_ace_hearts, index_ace_clubs, :]
-    print(f"Q function at the river with two aces (hearts and clubs): {q_with_ace}")
+            # Note: negative actions indicate folding, which is always a legal action
+            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
+                action_probabilities.append(1.0)
+            else:
+                action_probabilities.append(0.0)
 
-    q_with_ace = q[GameStage.RIVER, index_ace_hearts, index_ace_spades, :]
-    print(f"Q function at the river with two aces (hearts and spades): {q_with_ace}")
+        action_probabilities = np.array(action_probabilities) / sum(
+            action_probabilities
+        )
+        return np.random.choice(self.actions, p=action_probabilities)
+
+    def get_model_input(self, private_state, action):
+
+        # TODO Magic numbers for model input size
+        model_input = np.zeros((1, 6))
+        model_input[0, 0:5] = np.expand_dims(np.array(private_state), 0)
+        model_input[0, -1] = action
+
+        return model_input
+
+    def predicted_q(self, private_state, action):
+
+        model_input = self.get_model_input(private_state, action)
+        return self.model.predict(model_input)[0, 0]
+
+    def update_q(self, private_state, action, updated_guess_for_q):
+
+        model_input = self.get_model_input(private_state, action)
+        y = np.array([updated_guess_for_q])
+
+        self.model.fit(x=model_input, y=y, epochs=1, batch_size=1, steps_per_epoch=1, verbose=0)
+
+    def get_action(self, game_state, proba_random_action=0.8):
+
+        minimum_legal_bet = game_state.minimum_legal_bet()
+        maximum_legal_bet = game_state.maximum_legal_bet()
+
+        if np.random.uniform() < proba_random_action:
+
+            return self.random_legal_action(
+                minimum_legal_bet, maximum_legal_bet
+            )
+
+        for index, action in enumerate(self.actions):
+
+            private_state = self.get_private_state(game_state)
+            private_state = np.expand_dims(np.array(private_state), 0)
+
+            # TODO Put this in a function
+            model_input = np.zeros((len(self.actions), 6))
+            model_input[0:len(self.actions), 0:5] = np.repeat(private_state, len(self.actions), 0)
+            model_input[:, 5] = self.actions
+
+            # Note: the model returns predicted action-values of shape (len(self.actions), 1)
+            q_at_private_state = self.model.predict(model_input)[:, 0]
+
+            if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
+                # Note: we temporarily set q to -Inf at illegal actions, so that
+                #  those actions cannot be returned by argmax
+                q_at_private_state[index] = -np.inf
+
+        action_index = np.argmax(q_at_private_state)
+        return self.actions[action_index]
 
 
-def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
+def run_sarsa(n_players, n_episodes=2):
 
     # This is (roughly) Sutton and Barto Figure 6.9
     # page 130, TODO compare to page 131
     # page 244
 
     players = [QFunctionPlayer(player_index) for player_index in range(n_players)]
-
-    import pdb; pdb.set_trace()
 
     for episode in range(n_episodes):
 
@@ -77,17 +125,18 @@ def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
         learning_player = state.current_player
 
         private_state = players[learning_player].get_private_state(state)
-        action, action_index = players[learning_player].get_action(
+        action = players[learning_player].get_action(
             state, proba_random_action
         )
 
         cumulative_reward = 0
 
-        for player_index in range(n_players):
-            if player_index != learning_player:
-                # Note: at the beginning of every episode, we push updates to the q function
-                #  from the learning player to all other players
-                players[player_index].q = players[learning_player].q.copy()
+        # TODO Push model weights to the other players
+        # for player_index in range(n_players):
+        #     if player_index != learning_player:
+        #         # Note: at the beginning of every episode, we push updates to the q function
+        #         #  from the learning player to all other players
+        #         players[player_index].q = players[learning_player].q.copy()
 
         while not state.terminal:
 
@@ -101,7 +150,7 @@ def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
             #  to act (bet the small blind or big blind) in this block
             while state.current_player != learning_player:
 
-                action, _ = players[state.current_player].get_action(
+                action = players[state.current_player].get_action(
                     state, proba_random_action
                 )
                 state.update(action)
@@ -123,13 +172,11 @@ def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
 
             next_private_state = players[learning_player].get_private_state(state)
 
-            next_action, next_action_index = players[learning_player].get_action(
+            next_action = players[learning_player].get_action(
                 state, proba_random_action
             )
 
-            continuation_value = players[learning_player].q[next_private_state][
-                next_action_index
-            ]
+            continuation_value = players[learning_player].predicted_q(next_private_state, next_action)
 
             if state.terminal:
                 print(f"Reached a terminal state: player wealths are {state.wealth}")
@@ -139,14 +186,13 @@ def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
                 updated_guess_for_q = reward + continuation_value
 
             players[learning_player].update_q(
-                private_state, action_index, updated_guess_for_q, learning_rate
+                private_state, action, updated_guess_for_q
             )
 
             action = next_action
-            action_index = next_action_index
             private_state = next_private_state
 
-    describe_learned_q_function(players[learning_player].q)
+    players[learning_player].describe_learned_q_function()
 
 
 def main(n_players=3):
