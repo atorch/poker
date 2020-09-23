@@ -2,83 +2,17 @@ import numpy as np
 
 from poker.cards import Card, card_index, FULL_DECK, Rank, Suit
 from poker.state import GameStage, State
+from poker.q_function import get_q_function_model
 
 
-class SimpleQFunctionPlayer:
+class QFunctionPlayer:
     def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3]):
 
         self.player_index = player_index
 
-        n_game_stages = len(GameStage)
-        n_cards = len(FULL_DECK)
-
         self.actions = actions
-        n_actions = len(self.actions)
 
-        # Note: this is a very crude (incomplete) representation of the player's state:
-        #  It tracks the game stage and the player's hole cards (i.e. their private cards),
-        #  and nothing else. It is also a wasteful representation, because many of the 52*52
-        #  possible combinations of cards are duplicates (and some are impossible)
-        self.q = np.zeros((n_game_stages, n_cards, n_cards, n_actions))
-
-    def get_private_state(self, game_state):
-
-        # Note: this is an index into the player's Q function
-        #  The player is _not_ allowed to see the other player's private cards!
-        game_stage = game_state.game_stage
-        first_hole_card = game_state.hole_cards[self.player_index][0]
-        second_hole_card = game_state.hole_cards[self.player_index][1]
-
-        first_hole_card_index = card_index(first_hole_card)
-        second_hole_card_index = card_index(second_hole_card)
-
-        return game_stage, first_hole_card_index, second_hole_card_index
-
-    def random_legal_action_index(self, minimum_legal_bet, maximum_legal_bet):
-
-        action_probabilities = []
-        for action in self.actions:
-
-            # Note: negative actions indicate folding, which is always a legal action
-            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
-                action_probabilities.append(1.0)
-            else:
-                action_probabilities.append(0.0)
-
-        action_probabilities = np.array(action_probabilities) / sum(
-            action_probabilities
-        )
-        return np.random.choice(range(len(self.actions)), p=action_probabilities)
-
-    def get_action(self, game_state, proba_random_action=0.8):
-
-        private_state = self.get_private_state(game_state)
-        q_at_private_state = self.q[private_state].copy()
-
-        minimum_legal_bet = game_state.minimum_legal_bet()
-        maximum_legal_bet = game_state.maximum_legal_bet()
-
-        if np.random.uniform() < proba_random_action:
-
-            action_index = self.random_legal_action_index(
-                minimum_legal_bet, maximum_legal_bet
-            )
-            return self.actions[action_index], action_index
-
-        for index, action in enumerate(self.actions):
-            if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
-                # Note: we temporarily set q to -Inf at illegal actions, so that
-                #  those actions cannot be returned by argmax
-                q_at_private_state[index] = -np.inf
-
-        action_index = np.argmax(q_at_private_state)
-        return self.actions[action_index], action_index
-
-    def update_q(self, private_state, action_index, updated_guess_for_q, learning_rate):
-
-        self.q[private_state][action_index] = self.q[private_state][
-            action_index
-        ] + learning_rate * (updated_guess_for_q - self.q[private_state][action_index])
+        self.model = get_q_function_model(n_actions=len(self.actions))
 
 
 def describe_learned_q_function(q):
@@ -125,8 +59,12 @@ def describe_learned_q_function(q):
 def run_sarsa(n_players, n_episodes=20_000, learning_rate=0.01):
 
     # This is (roughly) Sutton and Barto Figure 6.9
+    # page 130, TODO compare to page 131
+    # page 244
 
-    players = [SimpleQFunctionPlayer(player_index) for player_index in range(n_players)]
+    players = [QFunctionPlayer(player_index) for player_index in range(n_players)]
+
+    import pdb; pdb.set_trace()
 
     for episode in range(n_episodes):
 
