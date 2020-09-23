@@ -16,23 +16,26 @@ class QFunctionPlayer:
 
     def describe_learned_q_function(self):
 
-        first_hole_card = Card(Rank.ACE, Suit.HEARTS)
-        second_hole_card = Card(Rank.ACE, Suit.CLUBS)
+        first_hole_cards = [Card(Rank.TWO, Suit.HEARTS), Card(Rank.SEVEN, Suit.HEARTS), Card(Rank.ACE, Suit.HEARTS)]
+        second_hole_cards = [Card(Rank.SEVEN, Suit.CLUBS), Card(Rank.ACE, Suit.CLUBS)]
 
-        private_state = (
-            GameStage.RIVER,
-            first_hole_card.rank,
-            first_hole_card.suit,
-            second_hole_card.rank,
-            second_hole_card.suit,
-        )
+        for first_hole_card in first_hole_cards:
+            for second_hole_card in second_hole_cards:
 
-        for action in self.actions:
+                private_state = (
+                    GameStage.RIVER,
+                    first_hole_card.rank,
+                    first_hole_card.suit,
+                    second_hole_card.rank,
+                    second_hole_card.suit,
+                )
 
-            q = self.predicted_q(private_state, action)
-            print(
-                f"Q function at the river with two aces (hearts and clubs), action {action}: {q}"
-            )
+                for action in self.actions:
+
+                    q = self.predicted_q(private_state, action)
+                    print(
+                        f"Q function at the river with {first_hole_card}, {second_hole_card}, action {action}: {q}"
+                    )
 
     def get_private_state(self, game_state):
 
@@ -98,31 +101,33 @@ class QFunctionPlayer:
 
             return self.random_legal_action(minimum_legal_bet, maximum_legal_bet)
 
+        private_state = self.get_private_state(game_state)
+        private_state = np.expand_dims(np.array(private_state), 0)
+
+        # TODO Put this in a function
+        model_input = np.zeros((len(self.actions), 6))
+        model_input[0 : len(self.actions), 0:5] = np.repeat(
+            private_state, len(self.actions), 0
+        )
+        model_input[:, 5] = self.actions
+
+        # Note: the model returns predicted action-values of shape (len(self.actions), 1)
+        q_at_private_state = self.model.predict(model_input)[:, 0]
+
         for index, action in enumerate(self.actions):
-
-            private_state = self.get_private_state(game_state)
-            private_state = np.expand_dims(np.array(private_state), 0)
-
-            # TODO Put this in a function
-            model_input = np.zeros((len(self.actions), 6))
-            model_input[0 : len(self.actions), 0:5] = np.repeat(
-                private_state, len(self.actions), 0
-            )
-            model_input[:, 5] = self.actions
-
-            # Note: the model returns predicted action-values of shape (len(self.actions), 1)
-            q_at_private_state = self.model.predict(model_input)[:, 0]
 
             if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
                 # Note: we temporarily set q to -Inf at illegal actions, so that
                 #  those actions cannot be returned by argmax
                 q_at_private_state[index] = -np.inf
 
+        # TODO Likely a better idea to let players play randomly,
+        #  even when they aren't exploring. Optimal strategy is likely _not_ deterministic play!
         action_index = np.argmax(q_at_private_state)
         return self.actions[action_index]
 
 
-def run_sarsa(n_players, n_episodes=2):
+def run_sarsa(n_players, n_episodes=1000):
 
     # This is (roughly) Sutton and Barto Figure 6.9
     # page 130, TODO compare to page 131
@@ -133,7 +138,7 @@ def run_sarsa(n_players, n_episodes=2):
     for episode in range(n_episodes):
 
         # Note: the probability of random (exploratory) actions decreases over time
-        proba_random_action = 0.02 + 0.98 * np.exp(-episode / 1000)
+        proba_random_action = 0.02 + 0.98 * np.exp(-episode / 500)
 
         initial_wealth = 100
         state = State(n_players=n_players, initial_wealth=initial_wealth, verbose=False)
