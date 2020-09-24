@@ -150,12 +150,11 @@ def run_sarsa(n_players, n_episodes=1000):
 
         cumulative_reward = 0
 
-        # TODO Push model weights to the other players
-        # for player_index in range(n_players):
-        #     if player_index != learning_player:
-        #         # Note: at the beginning of every episode, we push updates to the q function
-        #         #  from the learning player to all other players
-        #         players[player_index].q = players[learning_player].q.copy()
+        # Note: at the beginning of every episode, we push updates to the q function
+        #  from the learning player to all other players
+        for player_index in range(n_players):
+            if player_index != learning_player:
+                players[player_index].model.set_weights(players[learning_player].model.get_weights())
 
         while not state.terminal:
 
