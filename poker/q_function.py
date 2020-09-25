@@ -6,7 +6,7 @@ from tensorflow.keras.layers import (
 )
 
 
-def get_q_function_model(n_actions, n_inputs, n_units=64):
+def get_model(n_actions, n_inputs, n_units=64):
 
     # This is a model for Q(private_state, action), i.e. an action-value function
 

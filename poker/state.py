@@ -47,14 +47,6 @@ class State:
 
         return f"State: game stage {self.game_stage.name}, total pot ${self.total_bets()}, player {self.current_player} is next to act"
 
-    def total_bets(self):
-
-        total = 0
-        for stage_bets in self.bets_by_stage.values():
-            total += sum(sum(player_bets) for player_bets in stage_bets)
-
-        return total
-
     def initialize_pre_flop(self, dealer, deck=None):
 
         if deck is None:
@@ -117,6 +109,14 @@ class State:
         # Note: we sort the hole cards to reduce number of duplicate states
         #  The order of a player's hole cards does not affect the strength of their hand
         return [sort_hand(self.deal_k_cards(2)) for player in range(self.n_players)]
+
+    def total_bets(self):
+
+        total = 0
+        for stage_bets in self.bets_by_stage.values():
+            total += sum(sum(player_bets) for player_bets in stage_bets)
+
+        return total
 
     def total_bet_by_player(self, player_index):
 
