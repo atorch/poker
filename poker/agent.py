@@ -12,7 +12,7 @@ class Agent:
 
         self.actions = actions
 
-        self.len_private_state = 11
+        self.len_private_state = 13
         self.n_inputs = self.len_private_state + 1
 
         # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
@@ -79,12 +79,17 @@ class Agent:
                 game_state.public_cards[2].suit,
             ]
 
+        own_wealth = game_state.wealth[self.player_index]
+        total_bet_by_self = game_state.total_bet_by_player(self.player_index)
+
         private_state = [
             game_stage,
             first_hole_card.rank,
             first_hole_card.suit,
             second_hole_card.rank,
             second_hole_card.suit,
+            own_wealth,
+            total_bet_by_self,
         ] + public_cards
 
         return private_state
