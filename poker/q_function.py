@@ -6,13 +6,9 @@ from tensorflow.keras.layers import (
 )
 
 
-def get_q_function_model(n_actions, n_inputs=6, n_units=32):
+def get_q_function_model(n_actions, n_inputs, n_units=64):
 
-    # We want a function of the form Q(private_state, action), i.e. an action-value function
-    # For now, let's keep it simple and let the private state be
-    #  (game_stage, first_hole_card_rank, first_hole_card_suit, second_hole_card_rank, second_hole_card_suit)
-    #  Is the input simply a vector of length (6, ), with the action in the last index?
-    # TODO Add public cards, total bets so far, etc to private state
+    # This is a model for Q(private_state, action), i.e. an action-value function
 
     input_layer = Input(shape=(n_inputs,))
 
