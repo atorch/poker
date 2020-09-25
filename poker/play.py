@@ -79,7 +79,7 @@ def run_one_episode(episode, players, initial_wealth=100):
         private_state = next_private_state
 
 
-def run_sarsa(n_players, n_episodes=1000):
+def run_sarsa(n_players, n_episodes=2000):
 
     # This is (roughly) Sutton and Barto Figure 6.9
     # page 130, TODO compare to page 131

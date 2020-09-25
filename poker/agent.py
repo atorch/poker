@@ -1,7 +1,7 @@
 import numpy as np
 
 from poker.cards import Card, Rank, Suit
-from poker.state import GameStage
+from poker.state import GameStage, State
 from poker.q_function import get_model
 
 
@@ -20,44 +20,22 @@ class Agent:
             n_actions=len(self.actions), n_inputs=self.n_inputs
         )
 
-    def describe_learned_q_function(self):
+    def describe_learned_q_function(self, n_iter=20):
 
-        first_hole_cards = [
-            Card(Rank.TWO, Suit.HEARTS),
-            Card(Rank.SEVEN, Suit.HEARTS),
-            Card(Rank.ACE, Suit.HEARTS),
-        ]
-        second_hole_cards = [Card(Rank.SEVEN, Suit.CLUBS), Card(Rank.ACE, Suit.CLUBS)]
+        for _ in range(n_iter):
 
-        public_cards = [
-            Rank.ACE,
-            Suit.DIAMONDS,
-            Rank.NINE,
-            Suit.DIAMONDS,
-            Rank.FOUR,
-            Suit.CLUBS,
-        ]
+            game_state = State(n_players=3)
 
-        print(f"Value below assume the first three public cards are {public_cards}")
+            private_cards = game_state.hole_cards[self.player_index]
+            private_state = self.get_private_state(game_state)
 
-        for first_hole_card in first_hole_cards:
-            for second_hole_card in second_hole_cards:
-                for stage in [GameStage.FLOP, GameStage.RIVER]:
+            model_input = self.get_model_input(private_state, self.actions)
 
-                    private_state = [
-                        stage,
-                        first_hole_card.rank,
-                        first_hole_card.suit,
-                        second_hole_card.rank,
-                        second_hole_card.suit,
-                    ] + public_cards
+            q = self.model.predict(model_input)[:, 0]
 
-                    for action in self.actions:
-
-                        q = self.predicted_q(private_state, action)
-                        print(
-                            f"Value at stage {stage.name} with {first_hole_card}, {second_hole_card}, action {action}: {q}"
-                        )
+            print(
+                f"Value at stage {game_state.game_stage.name} with private cards {private_cards}: {q}"
+            )
 
     def get_private_state(self, game_state):
 
@@ -110,6 +88,11 @@ class Agent:
         )
         return np.random.choice(self.actions, p=action_probabilities)
 
+    def predicted_q(self, private_state, action):
+
+        model_input = self.get_model_input(private_state, actions=[action])
+        return self.model.predict(model_input)[0, 0]
+
     def get_model_input(self, private_state, actions):
 
         model_input = np.zeros((len(actions), self.n_inputs))
@@ -120,11 +103,6 @@ class Agent:
         model_input[:, -1] = actions
 
         return model_input
-
-    def predicted_q(self, private_state, action):
-
-        model_input = self.get_model_input(private_state, actions=[action])
-        return self.model.predict(model_input)[0, 0]
 
     def update_q(self, private_state, action, updated_guess_for_q):
 
