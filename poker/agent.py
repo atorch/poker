@@ -108,8 +108,9 @@ class Agent:
     def get_model_input(self, private_state, actions):
 
         model_input = np.zeros((len(actions), self.n_inputs))
-        model_input[0:len(actions), 0 : self.len_private_state] = np.repeat(
-            private_state, len(self.actions), 0
+        private_state = np.expand_dims(np.array(private_state), 0)
+        model_input[0:len(actions), 0:self.len_private_state] = np.repeat(
+            private_state, len(actions), 0
         )
         model_input[:, -1] = actions
 
@@ -139,7 +140,6 @@ class Agent:
             return self.random_legal_action(minimum_legal_bet, maximum_legal_bet)
 
         private_state = self.get_private_state(game_state)
-        private_state = np.expand_dims(np.array(private_state), 0)
 
         model_input = self.get_model_input(private_state, self.actions)
 
