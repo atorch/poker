@@ -2,7 +2,7 @@ import numpy as np
 
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage
-from poker.q_function import get_q_function_model
+from poker.q_function import get_model
 
 
 class Agent:
@@ -16,7 +16,7 @@ class Agent:
         self.n_inputs = self.len_private_state + 1
 
         # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
-        self.model = get_q_function_model(
+        self.model = get_model(
             n_actions=len(self.actions), n_inputs=self.n_inputs
         )
 
@@ -37,6 +37,8 @@ class Agent:
             Rank.FOUR,
             Suit.CLUBS,
         ]
+
+        print(f"Value below assume the first three public cards are {public_cards}")
 
         for first_hole_card in first_hole_cards:
             for second_hole_card in second_hole_cards:
@@ -103,24 +105,24 @@ class Agent:
         )
         return np.random.choice(self.actions, p=action_probabilities)
 
-    def get_model_input(self, private_state, action):
+    def get_model_input(self, private_state, actions):
 
-        model_input = np.zeros((1, self.n_inputs))
-        model_input[0, 0 : self.len_private_state] = np.expand_dims(
-            np.array(private_state), 0
+        model_input = np.zeros((len(actions), self.n_inputs))
+        model_input[0:len(actions), 0 : self.len_private_state] = np.repeat(
+            private_state, len(self.actions), 0
         )
-        model_input[0, -1] = action
+        model_input[:, -1] = actions
 
         return model_input
 
     def predicted_q(self, private_state, action):
 
-        model_input = self.get_model_input(private_state, action)
+        model_input = self.get_model_input(private_state, actions=[action])
         return self.model.predict(model_input)[0, 0]
 
     def update_q(self, private_state, action, updated_guess_for_q):
 
-        model_input = self.get_model_input(private_state, action)
+        model_input = self.get_model_input(private_state, actions=[action])
         y = np.array([updated_guess_for_q])
 
         self.model.fit(
@@ -139,12 +141,7 @@ class Agent:
         private_state = self.get_private_state(game_state)
         private_state = np.expand_dims(np.array(private_state), 0)
 
-        # TODO Put this in a function, test it
-        model_input = np.zeros((len(self.actions), self.n_inputs))
-        model_input[0 : len(self.actions), 0 : self.len_private_state] = np.repeat(
-            private_state, len(self.actions), 0
-        )
-        model_input[:, -1] = self.actions
+        model_input = self.get_model_input(private_state, self.actions)
 
         # Note: the model returns predicted action-values of shape (len(self.actions), 1)
         q_at_private_state = self.model.predict(model_input)[:, 0]
