@@ -39,6 +39,10 @@ class State:
                 f"Initialized game with {self.n_players} players each with wealth ${initial_wealth}"
             )
 
+        # Note: we track the number of times the deck has been shuffled
+        #  (i.e. the number of rounds that have been played)
+        self.n_deals = 0
+
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
         self.terminal = False
@@ -48,6 +52,8 @@ class State:
         return f"State: game stage {self.game_stage.name}, total pot ${self.total_bets()}, player {self.current_player} is next to act"
 
     def initialize_pre_flop(self, dealer, deck=None):
+
+        self.n_deals += 1
 
         if deck is None:
             self.shuffled_deck = sample(FULL_DECK, k=len(FULL_DECK))

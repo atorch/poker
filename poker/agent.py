@@ -16,9 +16,7 @@ class Agent:
         self.n_inputs = self.len_private_state + 1
 
         # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
-        self.model = get_model(
-            n_actions=len(self.actions), n_inputs=self.n_inputs
-        )
+        self.model = get_model(n_actions=len(self.actions), n_inputs=self.n_inputs)
 
     def describe_learned_q_function(self, n_iter=20):
 
@@ -97,7 +95,7 @@ class Agent:
 
         model_input = np.zeros((len(actions), self.n_inputs))
         private_state = np.expand_dims(np.array(private_state), 0)
-        model_input[0:len(actions), 0:self.len_private_state] = np.repeat(
+        model_input[0 : len(actions), 0 : self.len_private_state] = np.repeat(
             private_state, len(actions), 0
         )
         model_input[:, -1] = actions
