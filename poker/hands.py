@@ -41,8 +41,6 @@ def best_hand_strength(public_cards, hole_cards):
 
 def strength(hand):
 
-    # TODO Finish this function
-
     unique_suits = set(card.suit for card in hand)
 
     sorted_hand = sort_hand(hand)
@@ -84,7 +82,10 @@ def strength(hand):
         return 300 + first_most_common_rank, description
 
     if first_most_common_count == 2 and second_most_common_count == 2:
-        return 200, "two pair"
+        # Note: ties broken by higher pair, then lower pair
+        higher_pair = max(first_most_common_rank, second_most_common_rank)
+        description = f"two pair with {higher_pair.name}s high"
+        return 200 + higher_pair, description
 
     if first_most_common_count == 2:
         description = f"a pair of {first_most_common_rank.name}"
