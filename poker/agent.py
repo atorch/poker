@@ -6,14 +6,52 @@ from poker.state import GameStage, State
 from poker.q_function import get_model
 
 
+def softmax_with_temperature(q_values, temperature=1.0):
+    """
+    Compute softmax probabilities over Q-values with temperature parameter.
+
+    Args:
+        q_values: Array of Q-values (can include -inf for illegal actions)
+        temperature: Temperature parameter (higher = more uniform, lower = more greedy)
+            - temperature → 0: approaches argmax (deterministic)
+            - temperature = 1: standard softmax
+            - temperature → ∞: approaches uniform random
+
+    Returns:
+        Array of probabilities (sums to 1, illegal actions have probability 0)
+    """
+    # Handle illegal actions (Q = -inf)
+    legal_mask = np.isfinite(q_values)
+
+    if not np.any(legal_mask):
+        raise ValueError("All actions are illegal!")
+
+    # Scale Q-values by temperature
+    scaled_q = q_values / temperature
+
+    # Compute softmax only over legal actions (numerical stability)
+    legal_q = scaled_q[legal_mask]
+    max_q = np.max(legal_q)
+    exp_q = np.exp(legal_q - max_q)  # Subtract max for numerical stability
+
+    # Create probability distribution
+    probs = np.zeros_like(q_values)
+    probs[legal_mask] = exp_q / np.sum(exp_q)
+
+    return probs
+
+
 class Agent:
-    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3]):
+    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3], n_players=3, temperature=1.0):
 
         self.player_index = player_index
+        self.n_players = n_players
+        self.temperature = temperature
 
         self.actions = actions
 
-        self.len_private_state = 13
+        # State: game_stage(1) + hole_cards(4) + own_wealth(1) + own_bets(1) + pot_size(1) + public_cards(6) + opponent_wealths(n_players-1) + opponent_active(n_players-1)
+        self.len_private_state = 14 + 2 * (n_players - 1)
         self.n_inputs = self.len_private_state + 1
 
         # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
@@ -29,9 +67,16 @@ class Agent:
     def load_model(self, filepath):
         """Load trained model weights from disk."""
         if os.path.exists(filepath):
-            self.model.load_weights(filepath)
-            print(f"Model loaded from {filepath}")
-            return True
+            try:
+                self.model.load_weights(filepath)
+                print(f"Model loaded from {filepath}")
+                return True
+            except ValueError as e:
+                print(f"Warning: Could not load model from {filepath}")
+                print(f"  Error: {e}")
+                print(f"  This is likely due to a state representation change.")
+                print(f"  Starting with fresh model instead.")
+                return False
         else:
             print(f"No model found at {filepath}, starting fresh")
             return False
@@ -56,14 +101,16 @@ class Agent:
     def sanity_check_learned_strategy(self):
         """
         Sanity check that the learned Q-function makes poker sense.
-        Tests specific scenarios that should have obvious optimal actions.
+        Tests specific scenarios that should have obvious optimal Q-value ordering.
+        Note: With softmax policy, actions are sampled probabilistically, but we still
+        want Q-values to be ordered correctly (e.g., Q(bet) > Q(fold) for pocket aces).
         """
         print("\n" + "="*70)
         print("SANITY CHECK: Testing learned Q-function on key scenarios")
         print("="*70)
 
         # Test 1: Premium hands should prefer betting over folding
-        print("\n[Test 1] Premium starting hands should avoid folding pre-flop:")
+        print("\n[Test 1] Premium starting hands should have highest Q-value for non-fold actions:")
         premium_hands = [
             ([Card(Rank.ACE, Suit.HEARTS), Card(Rank.ACE, Suit.SPADES)], "Pocket Aces"),
             ([Card(Rank.KING, Suit.HEARTS), Card(Rank.KING, Suit.SPADES)], "Pocket Kings"),
@@ -78,17 +125,17 @@ class Agent:
             q_values = self.model.predict(model_input, verbose=0)[:, 0]
 
             action_strs = [f"fold" if a < 0 else f"bet ${a}" for a in self.actions]
-            best_action_idx = np.argmax(q_values)
-            best_action = self.actions[best_action_idx]
+            highest_q_idx = np.argmax(q_values)
+            highest_q_action = self.actions[highest_q_idx]
 
-            print(f"  {hand_name:20s} -> Best action: {action_strs[best_action_idx]:10s} ", end="")
-            if best_action < 0:
-                print("❌ FOLDING (BAD!)")
+            print(f"  {hand_name:20s} -> Highest Q: {action_strs[highest_q_idx]:10s} ", end="")
+            if highest_q_action < 0:
+                print("❌ Q(fold) is highest (BAD!)")
             else:
-                print("✓ Not folding (good)")
+                print("✓ Q(non-fold) is highest (good)")
 
         # Test 2: Worst hands should consider folding
-        print("\n[Test 2] Worst starting hands should consider folding when facing bets:")
+        print("\n[Test 2] Worst starting hands - checking Q-value ordering when facing bets:")
         worst_hands = [
             ([Card(Rank.SEVEN, Suit.HEARTS), Card(Rank.TWO, Suit.CLUBS)], "7-2 offsuit"),
             ([Card(Rank.EIGHT, Suit.HEARTS), Card(Rank.THREE, Suit.CLUBS)], "8-3 offsuit"),
@@ -106,12 +153,12 @@ class Agent:
             q_values = self.model.predict(model_input, verbose=0)[:, 0]
 
             action_strs = [f"fold" if a < 0 else f"bet ${a}" for a in self.actions]
-            best_action_idx = np.argmax(q_values)
+            highest_q_idx = np.argmax(q_values)
 
-            print(f"  {hand_name:20s} -> Best action: {action_strs[best_action_idx]:10s}")
+            print(f"  {hand_name:20s} -> Highest Q: {action_strs[highest_q_idx]:10s}")
 
         # Test 3: Should never fold when can check for free
-        print("\n[Test 3] Should prefer checking (bet $0) over folding when possible:")
+        print("\n[Test 3] Q(check) should always exceed Q(fold) when checking is free:")
         for _ in range(5):
             game_state = State(n_players=3)
             private_state = self.get_private_state(game_state)
@@ -123,9 +170,9 @@ class Agent:
 
             hole_cards = game_state.hole_cards[self.player_index]
             if q_values[fold_idx] > q_values[check_idx]:
-                print(f"  {hole_cards} -> ❌ Prefers folding over free check (BAD!)")
+                print(f"  {hole_cards} -> ❌ Q(fold) > Q(check) (BAD!)")
             else:
-                print(f"  {hole_cards} -> ✓ Prefers checking over folding (good)")
+                print(f"  {hole_cards} -> ✓ Q(check) > Q(fold) (good)")
 
         # Test 4: Show Q-value trends across hand strengths
         print("\n[Test 4] Q-value comparison across different hand strengths:")
@@ -177,6 +224,22 @@ class Agent:
 
         own_wealth = game_state.wealth[self.player_index]
         total_bet_by_self = game_state.total_bet_by_player(self.player_index)
+        pot_size = game_state.total_bets()
+
+        # Include opponent wealths (crucial for strategic play)
+        opponent_wealths = [
+            game_state.wealth[i]
+            for i in range(len(game_state.wealth))
+            if i != self.player_index
+        ]
+
+        # Include whether each opponent is still active (1) or has folded (0)
+        # Critical for pot odds: 1v1 vs 1v2 requires different strategy
+        opponent_active = [
+            1 if not game_state.has_folded[i] else 0
+            for i in range(len(game_state.has_folded))
+            if i != self.player_index
+        ]
 
         private_state = [
             game_stage,
@@ -186,7 +249,8 @@ class Agent:
             second_hole_card.suit,
             own_wealth,
             total_bet_by_self,
-        ] + public_cards
+            pot_size,
+        ] + public_cards + opponent_wealths + opponent_active
 
         return private_state
 
@@ -251,10 +315,11 @@ class Agent:
 
             if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
                 # Note: we temporarily set q to -Inf at illegal actions, so that
-                #  those actions cannot be returned by argmax
+                #  softmax will assign them probability 0
                 q_at_private_state[index] = -np.inf
 
-        # TODO Likely a better idea to let players play randomly,
-        #  even when they aren't exploring. Optimal strategy is likely _not_ deterministic play!
-        action_index = np.argmax(q_at_private_state)
+        # Use softmax policy to sample actions probabilistically
+        # This enables mixed strategies, which are essential for poker Nash equilibria
+        action_probs = softmax_with_temperature(q_at_private_state, self.temperature)
+        action_index = np.random.choice(len(self.actions), p=action_probs)
         return self.actions[action_index]
