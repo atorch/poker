@@ -291,3 +291,45 @@ def test_hand_strengh():
         > strength(jack_high)[0]
         > strength(nine_high)[0]
     )
+
+
+def test_two_pair_tie_breaking():
+    """
+    Test that two-pair hands are correctly ordered by their higher pair.
+    This verifies the tie-breaking logic in hands.py that returns 200 + higher_pair.
+    """
+    # Aces and Twos (AA22x) - higher pair is Aces
+    aces_and_twos = [
+        Card(Rank.ACE, Suit.HEARTS),
+        Card(Rank.ACE, Suit.SPADES),
+        Card(Rank.TWO, Suit.CLUBS),
+        Card(Rank.TWO, Suit.DIAMONDS),
+        Card(Rank.FIVE, Suit.HEARTS),
+    ]
+
+    # Kings and Queens (KKQQx) - higher pair is Kings
+    kings_and_queens = [
+        Card(Rank.KING, Suit.HEARTS),
+        Card(Rank.KING, Suit.SPADES),
+        Card(Rank.QUEEN, Suit.CLUBS),
+        Card(Rank.QUEEN, Suit.DIAMONDS),
+        Card(Rank.FIVE, Suit.HEARTS),
+    ]
+
+    # Jacks and Threes (JJ33x) - higher pair is Jacks
+    jacks_and_threes = [
+        Card(Rank.JACK, Suit.HEARTS),
+        Card(Rank.JACK, Suit.SPADES),
+        Card(Rank.THREE, Suit.CLUBS),
+        Card(Rank.THREE, Suit.DIAMONDS),
+        Card(Rank.FIVE, Suit.HEARTS),
+    ]
+
+    # Verify ordering: AA22 > KKQQ > JJ33
+    strength_aces_twos = strength(aces_and_twos)[0]
+    strength_kings_queens = strength(kings_and_queens)[0]
+    strength_jacks_threes = strength(jacks_and_threes)[0]
+
+    assert strength_aces_twos > strength_kings_queens
+    assert strength_kings_queens > strength_jacks_threes
+    assert strength_aces_twos > strength_jacks_threes

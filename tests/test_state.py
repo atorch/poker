@@ -39,6 +39,9 @@ def test_state_with_low_wealth():
 
     # Note: the small blind completes
     state.update(big_blind - small_blind)
+
+    # Big blind must act voluntarily before stage transitions
+    state.update(0)  # BB checks
     assert state.game_stage == GameStage.FLOP
 
     for _ in range(state.n_players):
@@ -72,6 +75,10 @@ def test_state_with_low_wealth():
 
     state.update(small_blind)
     state.update(small_blind)
+
+    # Both BB and SB must act voluntarily before stage transitions
+    state.update(0)  # BB checks
+    state.update(0)  # SB checks
 
     assert state.game_stage == GameStage.FLOP
 

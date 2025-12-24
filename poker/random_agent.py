@@ -1,6 +1,11 @@
 import numpy as np
 
 
+# TODO: Add test coverage for RandomAgent (see test_agent.py for examples)
+#   - Test that only legal actions are selected
+#   - Test that folding is always available
+#   - Test bet constraints are respected (minimum_legal_bet <= bet <= maximum_legal_bet)
+#   - Test edge case: when no positive bets are legal (all-in scenario)
 class RandomAgent:
     """
     A simple agent that selects legal actions uniformly at random.

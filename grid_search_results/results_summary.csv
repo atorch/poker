@@ -1,0 +1,4 @@
+config_id,batch_size,epsilon_decay_rate,learning_rate,n_episodes,network_size,temperature,final_frozen_win_rate_vs_random,final_frozen_win_rate_vs_skillful,final_prob_bet_pocket_aces,final_sanity_checks_passed,robustness_std_win_rate,episodes_to_40pct_win_rate,timestamp
+lr0.0001_net64x64_592b9a8e,1,200,0.0001,300,"(64, 64)",1.0,0.03,0.01,0.42189741134643555,False,0.0873053390247253,,2025-12-21T08:02:06.690227
+lr0.0003_net64x64_49153b5b,1,200,0.0003,300,"(64, 64)",1.0,0.9,0.78,0.9739792309701443,True,0.30125662740520015,100.0,2025-12-21T08:45:29.862485
+lr0.001_net64x64_10b451d2,1,200,0.001,300,"(64, 64)",1.0,0.5,0.1,0.6542679667472839,False,0.1818424226264781,200.0,2025-12-21T10:03:21.379606

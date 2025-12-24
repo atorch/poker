@@ -3,6 +3,7 @@ def argmax(values):
     """
     Return the _list_ of indexes that maximize a list of non-negative values
     For example, argmax([0, 55, 99, 99]) is [2, 3]
+    Used for determining split pots during ties
     """
 
     max_value = -1

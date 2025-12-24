@@ -4,6 +4,7 @@ import numpy as np
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
 from poker.q_function import get_model
+from poker.config import TYPICAL_INITIAL_WEALTH
 
 
 def softmax_with_temperature(q_values, temperature=1.0):
@@ -42,11 +43,13 @@ def softmax_with_temperature(q_values, temperature=1.0):
 
 
 class Agent:
-    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3], n_players=3, temperature=1.0):
+    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3], n_players=3, temperature=1.0, learning_rate=0.001, hidden_layers=None):
 
         self.player_index = player_index
         self.n_players = n_players
         self.temperature = temperature
+        self.learning_rate = learning_rate
+        self.hidden_layers = hidden_layers
 
         self.actions = actions
 
@@ -55,7 +58,7 @@ class Agent:
         self.n_inputs = self.len_private_state + 1
 
         # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
-        self.model = get_model(n_actions=len(self.actions), n_inputs=self.n_inputs)
+        self.model = get_model(n_actions=len(self.actions), n_inputs=self.n_inputs, learning_rate=learning_rate, hidden_layers=hidden_layers)
 
     def save_model(self, filepath):
         """Save the trained model weights to disk."""
@@ -81,11 +84,17 @@ class Agent:
             print(f"No model found at {filepath}, starting fresh")
             return False
 
+    def set_learning_rate(self, learning_rate):
+        """Update the learning rate of the optimizer."""
+        import tensorflow.keras.backend as K
+        self.learning_rate = learning_rate
+        K.set_value(self.model.optimizer.learning_rate, learning_rate)
+
     def describe_learned_q_function(self, n_iter=20):
 
         for _ in range(n_iter):
 
-            game_state = State(n_players=3)
+            game_state = State(n_players=3, initial_wealth=TYPICAL_INITIAL_WEALTH)
 
             private_cards = game_state.hole_cards[self.player_index]
             private_state = self.get_private_state(game_state)
@@ -118,7 +127,7 @@ class Agent:
         ]
 
         for hole_cards, hand_name in premium_hands:
-            game_state = State(n_players=3)
+            game_state = State(n_players=self.n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             game_state.hole_cards[self.player_index] = hole_cards
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
@@ -143,7 +152,7 @@ class Agent:
         ]
 
         for hole_cards, hand_name in worst_hands:
-            game_state = State(n_players=3)
+            game_state = State(n_players=self.n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             game_state.hole_cards[self.player_index] = hole_cards
             # Simulate that opponent has bet big (we're facing a decision)
             game_state.bets_by_stage[GameStage.PRE_FLOP][1] = [3]
@@ -160,7 +169,7 @@ class Agent:
         # Test 3: Should never fold when can check for free
         print("\n[Test 3] Q(check) should always exceed Q(fold) when checking is free:")
         for _ in range(5):
-            game_state = State(n_players=3)
+            game_state = State(n_players=self.n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
             q_values = self.model.predict(model_input, verbose=0)[:, 0]
@@ -188,7 +197,7 @@ class Agent:
         ]
 
         for hole_cards, hand_name in test_hands:
-            game_state = State(n_players=3)
+            game_state = State(n_players=self.n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             game_state.hole_cards[self.player_index] = hole_cards
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
@@ -227,18 +236,20 @@ class Agent:
         pot_size = game_state.total_bets()
 
         # Include opponent wealths (crucial for strategic play)
+        # Note: Order by RELATIVE position (circular/round-table seating) not absolute index
+        # This ensures position-invariance: all players see the same state structure
+        # opponent[0] = player to my right (+1 seat), opponent[1] = player +2 seats, etc.
         opponent_wealths = [
-            game_state.wealth[i]
-            for i in range(len(game_state.wealth))
-            if i != self.player_index
+            game_state.wealth[(self.player_index + offset) % game_state.n_players]
+            for offset in range(1, game_state.n_players)
         ]
 
         # Include whether each opponent is still active (1) or has folded (0)
         # Critical for pot odds: 1v1 vs 1v2 requires different strategy
+        # Note: Order by RELATIVE position (same circular ordering as wealths)
         opponent_active = [
-            1 if not game_state.has_folded[i] else 0
-            for i in range(len(game_state.has_folded))
-            if i != self.player_index
+            1 if not game_state.has_folded[(self.player_index + offset) % game_state.n_players] else 0
+            for offset in range(1, game_state.n_players)
         ]
 
         private_state = [
@@ -313,7 +324,9 @@ class Agent:
 
         for index, action in enumerate(self.actions):
 
-            if (0 <= action < minimum_legal_bet) or (action > maximum_legal_bet):
+            # Fold (action < 0) is always legal
+            # Only check legality for bet/call actions (action >= 0)
+            if action >= 0 and ((action < minimum_legal_bet) or (action > maximum_legal_bet)):
                 # Note: we temporarily set q to -Inf at illegal actions, so that
                 #  softmax will assign them probability 0
                 q_at_private_state[index] = -np.inf
