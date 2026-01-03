@@ -39,6 +39,13 @@ class State:
                 f"Initialized game with {self.n_players} players each with wealth ${initial_wealth}"
             )
 
+        # Note: we track the number of times the deck has been shuffled
+        #  (i.e. the number of rounds that have been played)
+        # TODO: Clarify semantics - n_deals is incremented in initialize_pre_flop,
+        #   so it starts at 1 (not 0). Should comment say "deals started" not "deals completed"?
+        #   Or should we move the increment to after round completes?
+        self.n_deals = 0
+
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
         self.terminal = False
@@ -48,6 +55,8 @@ class State:
         return f"State: game stage {self.game_stage.name}, total pot ${self.total_bets()}, player {self.current_player} is next to act"
 
     def initialize_pre_flop(self, dealer, deck=None):
+
+        self.n_deals += 1
 
         if deck is None:
             self.shuffled_deck = sample(FULL_DECK, k=len(FULL_DECK))
@@ -160,13 +169,41 @@ class State:
         if len(self.bets_by_stage[self.game_stage][next_player]) == 0:
             return False
 
+        # For pre-flop, ensure players who posted forced blinds have acted voluntarily
+        # (more than just the forced blind action)
+        if self.game_stage == GameStage.PRE_FLOP:
+            # Small blind is player left of dealer
+            sb_player = (self.dealer + 1) % self.n_players
+            # Big blind is player left of small blind
+            bb_player = (self.dealer + 2) % self.n_players
+
+            # SB and BB must have at least 2 actions (forced blind + voluntary decision)
+            if not self.has_folded[sb_player]:
+                if len(self.bets_by_stage[self.game_stage][sb_player]) < 2:
+                    return False
+
+            if not self.has_folded[bb_player]:
+                if len(self.bets_by_stage[self.game_stage][bb_player]) < 2:
+                    return False
+
+            # All other players must have at least 1 action
+            for player in range(self.n_players):
+                if player not in [sb_player, bb_player] and not self.has_folded[player]:
+                    if len(self.bets_by_stage[self.game_stage][player]) < 1:
+                        return False
+        else:
+            # Post-flop: all players just need at least 1 action
+            for player in range(self.n_players):
+                if not self.has_folded[player]:
+                    if len(self.bets_by_stage[self.game_stage][player]) < 1:
+                        return False
+
         # Note: these are totals for the current stage only (e.g. player 1 has bet a total of $40 during the turn)
         total_bet_current_player = sum(
             self.bets_by_stage[self.game_stage][self.current_player]
         )
         total_bet_next_player = sum(self.bets_by_stage[self.game_stage][next_player])
 
-        # TODO This is incorrect pre-flop, when the big blind is allowed to raise
         # TODO Could this lead to an infinite loop / never-ending stage if a player does not have enough wealth to complete the bet?
         # TODO Pytest edge cases where one player has low (but positive) wealth
         return total_bet_current_player == total_bet_next_player
@@ -220,10 +257,12 @@ class State:
         if self.verbose:
             print(f"Player wealths are now {self.wealth}")
 
-        # Now that we have redistributed wealth, we assign a new dealer,
-        #  deal new cards and go back to the initial stage
-        next_dealer = (self.dealer + 1) % self.n_players
-        self.initialize_pre_flop(dealer=next_dealer)
+        # Only start a new round if the game hasn't ended
+        if not self.terminal:
+            # Now that we have redistributed wealth, we assign a new dealer,
+            #  deal new cards and go back to the initial stage
+            next_dealer = (self.dealer + 1) % self.n_players
+            self.initialize_pre_flop(dealer=next_dealer)
 
     def calculate_best_hand_strengths(self):
 
@@ -250,9 +289,8 @@ class State:
 
         self.game_stage = list(GameStage)[self.game_stage + 1]
 
-        # Note: after moving to the next stage, the first person to act is
-        #  the first person left of the dealer (ignoring players who have already folded)
-        self.current_player = self.get_next_player(self.dealer)
+        # Note: Don't set current_player here - let update() handle it
+        # to avoid the player who completed the stage acting again
 
         if self.game_stage == GameStage.FLOP:
             self.public_cards.extend(self.deal_k_cards(3))
@@ -279,6 +317,9 @@ class State:
             if self.game_stage <= GameStage.TURN:
 
                 self.move_to_next_stage()
+
+                # After stage transition, first player to act is left of dealer
+                self.current_player = self.get_next_player(self.dealer)
 
             else:
 

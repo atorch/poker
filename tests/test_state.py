@@ -1,3 +1,11 @@
+"""
+Test core game state mechanics: betting, folding, stage transitions, and ties.
+
+These tests verify basic game dynamics and include some wealth conservation
+checks (see assertions with sum(state.wealth)). For more comprehensive wealth
+conservation testing across multiple deals and full games, see
+test_wealth_conservation.py.
+"""
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
 from poker.utils import argmax
@@ -39,6 +47,9 @@ def test_state_with_low_wealth():
 
     # Note: the small blind completes
     state.update(big_blind - small_blind)
+
+    # Big blind must act voluntarily before stage transitions
+    state.update(0)  # BB checks
     assert state.game_stage == GameStage.FLOP
 
     for _ in range(state.n_players):
@@ -72,6 +83,10 @@ def test_state_with_low_wealth():
 
     state.update(small_blind)
     state.update(small_blind)
+
+    # Both BB and SB must act voluntarily before stage transitions
+    state.update(0)  # BB checks
+    state.update(0)  # SB checks
 
     assert state.game_stage == GameStage.FLOP
 
