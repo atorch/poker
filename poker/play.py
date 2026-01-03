@@ -2,9 +2,11 @@ from datetime import datetime
 import numpy as np
 import math
 import os
+import random
+import tensorflow as tf
 
 from poker.state import State, GameStage
-from poker.agent import Agent
+from poker.agent import Agent, ReplayBuffer
 from poker.random_agent import RandomAgent
 from poker.skillful_random_agent import SkillfulRandomAgent
 from poker.config import MIN_INITIAL_WEALTH, MAX_INITIAL_WEALTH, TYPICAL_INITIAL_WEALTH
@@ -214,7 +216,7 @@ def evaluate_frozen_agent(agent, opponents, n_episodes=1000, max_deals=50000, pr
     }
 
 
-def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_INITIAL_WEALTH, max_initial_wealth=MAX_INITIAL_WEALTH, curriculum_random_episodes=100, curriculum_mixed_episodes=100, epsilon_decay_rate=200):
+def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_INITIAL_WEALTH, max_initial_wealth=MAX_INITIAL_WEALTH, curriculum_random_episodes=100, curriculum_mixed_episodes=100, epsilon_decay_rate=200, replay_buffer=None):
 
     # This is (roughly) Sutton and Barto Figure 6.9
     # page 130, TODO compare to page 131
@@ -362,7 +364,14 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             )
             updated_guess_for_q = reward + continuation_value
 
-        players[learning_player].update_q(private_state, action, updated_guess_for_q)
+        # Update Q-function: either immediately (online) or store in replay buffer (batch)
+        if replay_buffer is None:
+            # Online learning (batch_size=1): immediate update
+            players[learning_player].update_q(private_state, action, updated_guess_for_q)
+        else:
+            # Experience replay (batch_size>1): store transition for later batch update
+            # Store (state, action, reward, next_state) for SARSA-style updates
+            replay_buffer.add(private_state, action, reward, next_private_state)
 
         action = next_action
         private_state = next_private_state
@@ -467,54 +476,91 @@ def test_game_fairness_with_random_agents(n_players=3, n_episodes=1000, max_deal
 
 def run_sarsa(
     n_players,
-    n_episodes=800,
+    n_episodes=1500,
     model_path="models/player_0_latest.h5",
     save_interval=10,
     max_deals=5_000,
-    curriculum_random_episodes=500,
-    curriculum_mixed_episodes=100,
+    curriculum_random_episodes=800,
+    curriculum_mixed_episodes=400,
     learning_rate=0.0003,
-    hidden_layers=(64, 64),
+    hidden_layers=(128, 128),
     epsilon_decay_rate=200,
     temperature=1.0,
+    batch_size=8,
+    replay_buffer_size=10000,
+    updates_per_episode=1,
+    skip_fairness_test=False,
+    skip_equilibrium_test=False,
+    random_seed=None,
+    pretrain_wealth_heuristic=True,  # Enable by default - improves mean performance dramatically
 ):
     """
     Train a poker agent using SARSA with curriculum learning.
 
-    Curriculum stages (default: 800 episodes total):
-    1. Beat random agents (episodes 0-500)
-       - All opponents play completely random
+    Defaults use best config from medium grid search (lr=0.0003, (128,128) network, batch_size=8).
+    This config achieved 97.7% vs RandomAgent and 88.7% vs SkillfulRandomAgent.
+
+    Curriculum stages (default: 1500 episodes total):
+    1. Beat random agents (episodes 0-800)
+       - All opponents play completely random (RandomAgent)
        - Learn basic profitable patterns: fold trash, bet premium hands
+       - Goal: Exploit pure randomness, establish baseline strategy
        - Learning rate: 0.0003 (initial learning rate from grid search)
        - Epsilon-greedy: Decays from ~100% to ~2% for exploration
        - Longer phase ensures solid foundation before self-play
 
-    2. Mixed opponents (episodes 500-600)
+    2. Mixed opponents (episodes 800-1200)
        - 50% self-play, 50% RandomAgent/SkillfulRandomAgent (smoother transition)
+       - Introduces SkillfulRandomAgent: protects premium hands (only folds AA/AK/pairs 5% of time)
+       - Goal: Learn generalized strategy, not just exploit random folding
        - Learning rate: 0.00006 (0.2x initial, to preserve learned strategies)
        - Epsilon-greedy: DISABLED (0.0) - softmax-only exploration
        - Prevents epsilon from corrupting SARSA Q-targets during multi-agent learning
 
-    3. Self-play with anchoring (episodes 600+)
+    3. Self-play with anchoring (episodes 1200+)
        - 70% self-play, 30% RandomAgent/SkillfulRandomAgent (never 100%!)
+       - Goal: Develop advanced strategies through self-play while preventing collapse
        - Learning rate: 0.00003 (0.1x initial, very conservative for stability)
        - Epsilon-greedy: DISABLED (0.0) - softmax-only exploration
        - High anchor percentage prevents catastrophic forgetting
        - SkillfulRandomAgent provides explicit signal that premium hands have value
+
+    Pre-training (pretrain_wealth_heuristic=True):
+       - Initializes Q-function to approximate wealth before RL training
+       - Dramatically improves mean performance (47.9% → 84.3% in variance study)
+       - Does NOT reduce variance but provides better starting point
+
+    Experience Replay (batch_size > 1):
+       - batch_size=1: Online learning (immediate updates after each transition)
+       - batch_size>1: Experience replay (store transitions, sample mini-batches)
+       - replay_buffer_size: Max transitions to store (default: 10000)
+       - updates_per_episode: Number of batch updates after each episode (default: 1)
+       - Best from grid search: batch_size=8
     """
 
-    # PRE-TRAINING TEST: Verify game logic is fair before training
-    print("\nRunning pre-training fairness test...")
-    game_is_fair = test_game_fairness_with_random_agents(
-        n_players=n_players,
-        n_episodes=1000,  # Fast test: 1000 episodes
-        max_deals=max_deals
-    )
+    # Set random seed for reproducibility if provided
+    if random_seed is not None:
+        print(f"\n🎲 Setting random seed to {random_seed} for reproducibility")
+        np.random.seed(random_seed)
+        tf.random.set_seed(random_seed)
+        random.seed(random_seed)
 
-    if not game_is_fair:
-        print("\n⚠️  Game fairness test failed! Fix game logic before training.")
-        print("Aborting training.\n")
-        return
+    # PRE-TRAINING TEST: Verify game logic is fair before training (optional - skip during grid search)
+    if not skip_fairness_test:
+        print("\nRunning pre-training fairness test...")
+        game_is_fair = test_game_fairness_with_random_agents(
+            n_players=n_players,
+            n_episodes=1000,  # Fast test: 1000 episodes
+            max_deals=max_deals
+        )
+
+        if not game_is_fair:
+            print("\n⚠️  Game fairness test failed! Fix game logic before training.")
+            print("Aborting training.\n")
+            return
+    else:
+        print("\n(Skipping fairness test - assuming game logic is correct)")
+
 
     # Create learning agent (player 0) and opponent agents
     learning_agent = Agent(
@@ -538,7 +584,16 @@ def run_sarsa(
     ]
 
     # Try to load existing model for the learning player
-    learning_agent.load_model(model_path)
+    model_loaded = learning_agent.load_model(model_path)
+
+    # Pre-train with wealth heuristic if enabled and no model was loaded
+    if pretrain_wealth_heuristic and not model_loaded:
+        learning_agent.pretrain_on_wealth_heuristic(
+            n_samples=1000,
+            n_epochs=10,
+            batch_size=32,
+            verbose=1
+        )
 
     # Track cumulative statistics
     all_stats = {
@@ -576,6 +631,18 @@ def run_sarsa(
         print(f"  (No phase 3 - only {n_episodes} episodes total)")
     print("=" * 70)
     print(f"\nDESCRIPTION: {RUN_DESCRIPTION}")
+    print("=" * 70)
+
+    # Create experience replay buffer (used only if batch_size > 1)
+    replay_buffer = None
+    if batch_size > 1:
+        replay_buffer = ReplayBuffer(capacity=replay_buffer_size)
+        print(f"\nExperience Replay: ENABLED")
+        print(f"  Batch size: {batch_size}")
+        print(f"  Buffer capacity: {replay_buffer_size}")
+        print(f"  Updates per episode: {updates_per_episode}")
+    else:
+        print(f"\nExperience Replay: DISABLED (batch_size=1, online learning)")
     print("=" * 70)
 
     for episode in range(n_episodes):
@@ -641,7 +708,8 @@ def run_sarsa(
         episode_stats = run_one_episode(episode, players, max_deals=max_deals,
                                          curriculum_random_episodes=curriculum_random_episodes,
                                          curriculum_mixed_episodes=curriculum_mixed_episodes,
-                                         epsilon_decay_rate=epsilon_decay_rate)
+                                         epsilon_decay_rate=epsilon_decay_rate,
+                                         replay_buffer=replay_buffer)
 
         # Track statistics
         all_stats['deals_per_episode'].append(episode_stats['deals'])
@@ -686,6 +754,30 @@ def run_sarsa(
             pct_fold = 0
         all_stats['positive_bet_percentages'].append(pct_positive)
         all_stats['fold_percentages'].append(pct_fold)
+
+        # Experience replay: Sample and train on batches (only if batch_size > 1)
+        if replay_buffer is not None and len(replay_buffer) >= batch_size:
+            for _ in range(updates_per_episode):
+                # Sample mini-batch from replay buffer
+                states, actions, rewards, next_states = replay_buffer.sample(batch_size)
+
+                # Compute SARSA targets for each transition in batch
+                target_q_values = np.zeros(batch_size)
+                for i in range(batch_size):
+                    # Get next action's Q-value (SARSA uses the actual next action taken)
+                    # Note: In replay buffer, we need to recompute next_action using current policy
+                    # For now, use a simplified approach: estimate max Q for next state
+                    model_input = learning_agent.get_model_input(next_states[i], learning_agent.actions)
+                    next_q_values = learning_agent.model.predict(model_input, verbose=0)[:, 0]
+
+                    # SARSA target: reward + Q(next_state, next_action)
+                    # Use max for simplicity (this is closer to Q-learning)
+                    # TODO: Store next_action in buffer for true SARSA
+                    max_next_q = np.max(next_q_values)
+                    target_q_values[i] = rewards[i] + max_next_q
+
+                # Update Q-function with mini-batch
+                learning_agent.update_q_batch(states, actions, target_q_values)
 
         # Print progress every 10 episodes with diagnostics
         if episode % 10 == 0 and episode > 0:
@@ -862,48 +954,87 @@ def run_sarsa(
     else:
         print(f"    ❌ FAIL: Agent does not consistently beat random play")
 
-    # Validation 2: Frozen self-play equilibrium test
-    print(f"\n[Validation 2] Frozen self-play equilibrium test...")
-    print(f"  Testing for positional bias and Nash convergence...")
-    print(f"  All {n_players} players use identical frozen policy (learning agent's weights)")
-    print(f"  Running 1000 episodes...")
-
-    # Create clones of the learning agent for other positions
-    # Must use same architecture (hidden_layers) to match weight shapes
-    frozen_clones = []
-    for i in range(1, n_players):
-        clone = Agent(
-            player_index=i,
-            n_players=n_players,
-            temperature=learning_agent.temperature,
-            learning_rate=learning_agent.learning_rate,
-            hidden_layers=learning_agent.hidden_layers
-        )
-        clone.model.set_weights(learning_agent.model.get_weights())
-        frozen_clones.append(clone)
-
-    results = evaluate_frozen_agent(
-        learning_agent, frozen_clones, n_episodes=1000, max_deals=max_deals, progress_interval=100
+    # Validation 2: Frozen agent vs SkillfulRandomAgent (generalization test)
+    print(f"\n[Validation 2] Testing frozen agent vs {n_players-1} SkillfulRandomAgent opponent(s) ({n_players}-player game)...")
+    print(f"  Running 1000 episodes with no learning and no exploration...")
+    print(f"  SkillfulRandomAgent protects premium hands (only folds AA/AK/pairs 5% of time)")
+    skillful_opponents = [
+        SkillfulRandomAgent(player_index=i, actions=learning_agent.actions)
+        for i in range(1, n_players)
+    ]
+    results_skillful = evaluate_frozen_agent(
+        learning_agent, skillful_opponents, n_episodes=1000, max_deals=max_deals
     )
-
-    fair_share = 1.0 / n_players
     print(f"\n  Results:")
-    print(f"    Player 0 win rate: {100 * results['win_rate']:.1f}% ± {100 * results['ci_margins']['win']:.1f}% (95% CI)")
-    print(f"    Wins: {results['wins']}/1000")
-    if results['timeouts'] > 0:
-        print(f"    Timeouts: {results['timeouts']}")
-    print(f"    Expected (Nash equilibrium): {100 * fair_share:.1f}% ± {100 * results['ci_margins']['win']:.1f}%")
+    print(f"    Win rate:        {100 * results_skillful['win_rate']:.1f}% ± {100 * results_skillful['ci_margins']['win']:.1f}% (95% CI)")
+    print(f"    Survival rate:   {100 * results_skillful['survival_rate']:.1f}% ± {100 * results_skillful['ci_margins']['survival']:.1f}%")
+    print(f"    Elimination rate: {100 * results_skillful['elimination_rate']:.1f}% ± {100 * results_skillful['ci_margins']['elimination']:.1f}%")
+    print(f"    Games: {results_skillful['wins']} wins, {results_skillful['survivals']} survivals, {results_skillful['eliminations']} eliminations (out of 1000)")
+    if results_skillful['timeouts'] > 0:
+        print(f"    Timeouts: {results_skillful['timeouts']}")
 
-    # Check if deviation is statistically significant (more than 2 standard errors)
-    deviation = abs(results['win_rate'] - fair_share)
-    if deviation > 2 * results['ci_margins']['win']:
-        print(f"    ⚠️  WARNING: Significant deviation from fair share!")
-        print(f"    This may indicate:")
-        print(f"      - Positional bias bug in game logic")
-        print(f"      - Agent hasn't converged to Nash equilibrium")
-        print(f"      - Training artifact from player 0 always being learning agent")
+    # Compare to RandomAgent performance
+    drop_random_to_skillful = (results['win_rate'] - results_skillful['win_rate']) * 100
+    print(f"\n  Generalization analysis:")
+    print(f"    RandomAgent win rate:      {100 * results['win_rate']:.1f}%")
+    print(f"    SkillfulRandomAgent win rate: {100 * results_skillful['win_rate']:.1f}%")
+    print(f"    Performance drop:          {drop_random_to_skillful:.1f} pp")
+
+    if results_skillful['win_rate'] > fair_share_random:
+        if drop_random_to_skillful < 20:
+            print(f"    ✓ EXCELLENT: Agent beats SkillfulRandomAgent with good generalization (drop < 20pp)")
+        elif drop_random_to_skillful < 30:
+            print(f"    ✓ GOOD: Agent beats SkillfulRandomAgent (drop < 30pp)")
+        else:
+            print(f"    ⚠️  WARNING: Large performance drop (>30pp) suggests over-fitting to random folding")
     else:
-        print(f"    ✓ PASS: Win rate consistent with fair share (no obvious positional bias)")
+        print(f"    ❌ FAIL: Agent does not beat SkillfulRandomAgent (learned exploitative, not generalizable strategy)")
+
+    # Validation 3: Frozen self-play equilibrium test (optional - skip during grid search)
+    if not skip_equilibrium_test:
+        print(f"\n[Validation 3] Frozen self-play equilibrium test...")
+        print(f"  Testing for positional bias and Nash convergence...")
+        print(f"  All {n_players} players use identical frozen policy (learning agent's weights)")
+        print(f"  Running 1000 episodes...")
+
+        # Create clones of the learning agent for other positions
+        # Must use same architecture (hidden_layers) to match weight shapes
+        frozen_clones = []
+        for i in range(1, n_players):
+            clone = Agent(
+                player_index=i,
+                n_players=n_players,
+                temperature=learning_agent.temperature,
+                learning_rate=learning_agent.learning_rate,
+                hidden_layers=learning_agent.hidden_layers
+            )
+            clone.model.set_weights(learning_agent.model.get_weights())
+            frozen_clones.append(clone)
+
+        results = evaluate_frozen_agent(
+            learning_agent, frozen_clones, n_episodes=1000, max_deals=max_deals, progress_interval=100
+        )
+
+        fair_share = 1.0 / n_players
+        print(f"\n  Results:")
+        print(f"    Player 0 win rate: {100 * results['win_rate']:.1f}% ± {100 * results['ci_margins']['win']:.1f}% (95% CI)")
+        print(f"    Wins: {results['wins']}/1000")
+        if results['timeouts'] > 0:
+            print(f"    Timeouts: {results['timeouts']}")
+        print(f"    Expected (Nash equilibrium): {100 * fair_share:.1f}% ± {100 * results['ci_margins']['win']:.1f}%")
+
+        # Check if deviation is statistically significant (more than 2 standard errors)
+        deviation = abs(results['win_rate'] - fair_share)
+        if deviation > 2 * results['ci_margins']['win']:
+            print(f"    ⚠️  WARNING: Significant deviation from fair share!")
+            print(f"    This may indicate:")
+            print(f"      - Positional bias bug in game logic")
+            print(f"      - Agent hasn't converged to Nash equilibrium")
+            print(f"      - Training artifact from player 0 always being learning agent")
+        else:
+            print(f"    ✓ PASS: Win rate consistent with fair share (no obvious positional bias)")
+    else:
+        print(f"\n(Skipping equilibrium test - grid search mode)")
 
     print("\n" + "=" * 70)
     print(f"DESCRIPTION: {RUN_DESCRIPTION}")

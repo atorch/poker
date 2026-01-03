@@ -1,3 +1,11 @@
+"""
+Test core game state mechanics: betting, folding, stage transitions, and ties.
+
+These tests verify basic game dynamics and include some wealth conservation
+checks (see assertions with sum(state.wealth)). For more comprehensive wealth
+conservation testing across multiple deals and full games, see
+test_wealth_conservation.py.
+"""
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
 from poker.utils import argmax

@@ -26,7 +26,7 @@ from poker.play import evaluate_frozen_agent, get_pocket_aces_bet_probability
 
 GRID_PARAMS = {
     'learning_rate': [0.0001, 0.0003, 0.001, 0.003],
-    'batch_size': [1],  # Start with 1 (online learning), add replay buffer later
+    'batch_size': [1, 8, 32, 64, 128],  # Test experience replay with different batch sizes
     'network_size': [(32, 32), (64, 64), (128, 128), (64, 64, 64)],
     'n_episodes': [300, 500],  # Shorter runs to explore more configurations
     'epsilon_decay_rate': [100, 200, 400],
@@ -34,17 +34,80 @@ GRID_PARAMS = {
 }
 
 # For initial exploration, use a smaller grid
-QUICK_GRID_PARAMS = {
-    'learning_rate': [0.0001, 0.0003, 0.001],
-    'batch_size': [1],
+# Focus on batch_size + learning_rate grid (based on README priority)
+QUICK_GRID_PARAMS_BATCH_SIZE = {
+    'learning_rate': [0.0003],  # Best from previous grid search
+    'batch_size': [8, 32, 64],  # Main variable of interest (skip 1 and 128, focus on stable range)
     'network_size': [(64, 64)],
     'n_episodes': [300],
     'epsilon_decay_rate': [200],
     'temperature': [1.0],
 }
 
+# Architecture comparison grid - test transformers vs MLPs
+ARCHITECTURE_GRID = {
+    'learning_rate': [0.0003],  # Best from batch_size experiments
+    'batch_size': [8],  # Best from batch_size experiments
+    'network_size': [
+        (64, 64),           # Baseline MLP
+        (128, 128),         # Bigger MLP
+        (128, 128, 128),    # Deep MLP
+        'transformer_small', # Transformer: 2 heads, 64 dim, 1 layer (~40K params)
+        'transformer',      # Transformer: 4 heads, 128 dim, 2 layers (~291K params)
+    ],
+    'n_episodes': [500],  # Longer training for bigger models
+    'epsilon_decay_rate': [200],
+    'temperature': [1.0],
+    'pretrain_wealth_heuristic': [True],  # Enable by default
+}
+
+# Variance study grid - run best config multiple times with different seeds
+VARIANCE_STUDY_GRID = {
+    'learning_rate': [0.0003],
+    'batch_size': [8],
+    'network_size': [(64, 64)],  # Best performing MLP from architecture grid
+    'n_episodes': [500],
+    'epsilon_decay_rate': [200],
+    'temperature': [1.0],
+    'random_seed': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # Run 10 times with different seeds
+    'pretrain_wealth_heuristic': [False],  # No pre-training
+}
+
+# Variance study with pre-training - same config, test if pre-training reduces variance
+VARIANCE_STUDY_PRETRAIN_GRID = {
+    'learning_rate': [0.0003],
+    'batch_size': [8],
+    'network_size': [(64, 64)],
+    'n_episodes': [500],
+    'epsilon_decay_rate': [200],
+    'temperature': [1.0],
+    'random_seed': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # Run 10 times with different seeds
+    'pretrain_wealth_heuristic': [True],  # Enable pre-training
+}
+
+# Medium grid - test if larger networks can handle expanded 22-feature state space
+# After turn/river bug fix, (64,64) network performance degraded (84.3% → 66.6%)
+# Hypothesis: larger networks needed to effectively use turn/river information
+MEDIUM_GRID = {
+    'learning_rate': [0.0001, 0.0003, 0.001],  # Test range around current best
+    'batch_size': [8],  # Keep best value from previous experiments
+    'network_size': [
+        (64, 64),           # Baseline (struggled with 22 features)
+        (128, 128),         # 2× wider
+        (128, 128, 128),    # Deeper (3 layers)
+        (256, 256),         # Much larger (4× wider)
+    ],
+    'n_episodes': [500, 1000],  # Test longer training for larger state/networks
+    'epsilon_decay_rate': [200],  # Keep best value
+    'temperature': [1.0],  # Keep best value
+    'pretrain_wealth_heuristic': [True],  # Enable by default
+}
+
+# Default to architecture grid
+QUICK_GRID_PARAMS = ARCHITECTURE_GRID
+
 # Metrics to track at each checkpoint (every 100 episodes)
-CHECKPOINT_EPISODES = [100, 200, 300, 400, 500]
+CHECKPOINT_EPISODES = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
 
 # Output configuration
 RESULTS_DIR = Path("grid_search_results")
@@ -74,7 +137,7 @@ def evaluate_agent_at_checkpoint(agent, n_players=3, episode=0):
         for i in range(1, n_players)
     ]
     results_random = evaluate_frozen_agent(
-        agent, random_opponents, n_episodes=100, max_deals=5000
+        agent, random_opponents, n_episodes=300, max_deals=5000
     )
 
     # Metric 2: Frozen win rate vs SkillfulRandomAgent
@@ -83,7 +146,7 @@ def evaluate_agent_at_checkpoint(agent, n_players=3, episode=0):
         for i in range(1, n_players)
     ]
     results_skillful = evaluate_frozen_agent(
-        agent, skillful_opponents, n_episodes=100, max_deals=5000
+        agent, skillful_opponents, n_episodes=300, max_deals=5000
     )
 
     # Metric 3: P(bet|AA)
@@ -131,9 +194,12 @@ def run_single_configuration(config, config_id):
     try:
         print(f"  Training for {n_episodes} episodes...")
         print(f"    Learning rate: {config['learning_rate']}")
+        print(f"    Batch size: {config['batch_size']}")
         print(f"    Network size: {config['network_size']}")
         print(f"    Epsilon decay: {config['epsilon_decay_rate']}")
         print(f"    Temperature: {config['temperature']}")
+        if config.get('pretrain_wealth_heuristic', False):
+            print(f"    Pre-training: ENABLED (wealth heuristic)")
 
         # Run SARSA training
         run_sarsa(
@@ -147,6 +213,11 @@ def run_single_configuration(config, config_id):
             hidden_layers=config['network_size'],
             epsilon_decay_rate=config['epsilon_decay_rate'],
             temperature=config['temperature'],
+            batch_size=config['batch_size'],
+            skip_fairness_test=True,  # Skip during grid search to save time
+            skip_equilibrium_test=True,  # Skip during grid search to save time
+            random_seed=config.get('random_seed', None),  # Use seed if provided for variance study
+            pretrain_wealth_heuristic=config.get('pretrain_wealth_heuristic', False),  # Enable if specified
         )
 
         # Evaluate at each checkpoint to track policy evolution
@@ -304,27 +375,51 @@ def generate_config_id(config):
 
     # Also include key parameters for readability
     lr = config['learning_rate']
-    net = 'x'.join(map(str, config['network_size']))
+    net_size = config['network_size']
 
-    return f"lr{lr}_net{net}_{short_hash}"
+    # Handle both tuple (e.g., (64, 64)) and string (e.g., 'transformer') network_size
+    if isinstance(net_size, str):
+        net = net_size  # Use string directly (e.g., 'transformer')
+    else:
+        net = 'x'.join(map(str, net_size))  # Join tuple (e.g., '64x64')
+
+    # Include seed if present (for variance studies)
+    if 'random_seed' in config and config['random_seed'] is not None:
+        return f"lr{lr}_net{net}_seed{config['random_seed']}_{short_hash}"
+    else:
+        return f"lr{lr}_net{net}_{short_hash}"
 
 
 # ============================================================================
 # Main Grid Search
 # ============================================================================
 
-def run_grid_search(use_quick_grid=True):
+def run_grid_search(mode='quick'):
     """
     Run grid search over hyperparameters.
 
     Args:
-        use_quick_grid: If True, use smaller QUICK_GRID_PARAMS for initial exploration
+        mode: Grid search mode ('quick', 'full', 'medium', 'variance', 'variance_pretrain')
+              - 'quick': QUICK_GRID_PARAMS (default architecture comparison)
+              - 'full': GRID_PARAMS (exhaustive search)
+              - 'medium': MEDIUM_GRID (larger networks + learning rates for 22-feature state)
+              - 'variance': VARIANCE_STUDY_GRID (same config, multiple seeds, no pretrain)
+              - 'variance_pretrain': VARIANCE_STUDY_PRETRAIN_GRID (with wealth heuristic pretrain)
     """
     # Setup
     RESULTS_DIR.mkdir(exist_ok=True)
 
-    # Select grid
-    params = QUICK_GRID_PARAMS if use_quick_grid else GRID_PARAMS
+    # Select grid based on mode
+    if mode == 'variance':
+        params = VARIANCE_STUDY_GRID
+    elif mode == 'variance_pretrain':
+        params = VARIANCE_STUDY_PRETRAIN_GRID
+    elif mode == 'medium':
+        params = MEDIUM_GRID
+    elif mode == 'full':
+        params = GRID_PARAMS
+    else:  # 'quick' or default
+        params = QUICK_GRID_PARAMS
 
     # Generate all configurations
     param_names = sorted(params.keys())
@@ -334,9 +429,19 @@ def run_grid_search(use_quick_grid=True):
         for values in itertools.product(*param_values)
     ]
 
+    # Add state space size to each config for versioning
+    # This ensures different state representations generate different config hashes
+    # For 3 players: 18 + 2*(n_players-1) = 22 features
+    n_players = 3
+    state_space_size = 18 + 2 * (n_players - 1)
+    for config in all_configs:
+        config['state_space_size'] = state_space_size
+
     print(f"\n{'=' * 80}")
-    print(f"GRID SEARCH: {'QUICK' if use_quick_grid else 'FULL'} MODE")
+    print(f"GRID SEARCH: {mode.upper()} MODE")
     print(f"{'=' * 80}")
+    if mode == 'variance':
+        print(f"Running variance study: same config with {len(all_configs)} different random seeds")
     print(f"Total configurations to evaluate: {len(all_configs)}")
     print(f"Results will be saved to: {RESULTS_DIR}")
     print(f"{'=' * 80}\n")
@@ -380,11 +485,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run hyperparameter grid search")
     parser.add_argument(
-        '--full',
-        action='store_true',
-        help='Run full grid search (default: quick mode with smaller grid)'
+        '--mode',
+        type=str,
+        choices=['quick', 'full', 'medium', 'variance', 'variance_pretrain'],
+        default='quick',
+        help='Grid search mode: quick (architecture comparison), full (exhaustive), medium (larger networks for 22-feature state), variance (multiple seeds), or variance_pretrain (multiple seeds with wealth heuristic pretraining)'
     )
 
     args = parser.parse_args()
 
-    run_grid_search(use_quick_grid=not args.full)
+    run_grid_search(mode=args.mode)

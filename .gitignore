@@ -134,3 +134,6 @@ dmypy.json
 # Trained models and training logs
 models/*
 training_output*.txt
+**/*h5
+
+*backup.png

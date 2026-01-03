@@ -1,10 +1,76 @@
 import os
 import numpy as np
+from collections import deque
 
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
 from poker.q_function import get_model
 from poker.config import TYPICAL_INITIAL_WEALTH
+
+
+class ReplayBuffer:
+    """
+    Experience replay buffer for storing and sampling transitions.
+
+    Stores (state, action, reward, next_state) tuples and allows sampling
+    random mini-batches for training. This stabilizes learning by:
+    1. Breaking temporal correlations between consecutive samples
+    2. Allowing multiple updates from the same experience
+    3. Reducing variance in gradient estimates
+    """
+
+    def __init__(self, capacity=10000):
+        """
+        Args:
+            capacity: Maximum number of transitions to store
+        """
+        self.buffer = deque(maxlen=capacity)
+
+    def add(self, state, action, reward, next_state):
+        """
+        Add a transition to the buffer.
+
+        Args:
+            state: Private state representation (list/array)
+            action: Action taken (int)
+            reward: Immediate reward received (float)
+            next_state: Next private state representation (list/array)
+        """
+        self.buffer.append((state, action, reward, next_state))
+
+    def sample(self, batch_size):
+        """
+        Sample a random mini-batch of transitions.
+
+        Args:
+            batch_size: Number of transitions to sample
+
+        Returns:
+            Tuple of (states, actions, rewards, next_states) as numpy arrays
+        """
+        if len(self.buffer) < batch_size:
+            # If buffer doesn't have enough samples, return all available
+            batch_size = len(self.buffer)
+
+        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
+        batch = [self.buffer[i] for i in indices]
+
+        states, actions, rewards, next_states = zip(*batch)
+
+        return (
+            np.array(states),
+            np.array(actions),
+            np.array(rewards),
+            np.array(next_states)
+        )
+
+    def __len__(self):
+        """Return current size of buffer."""
+        return len(self.buffer)
+
+    def clear(self):
+        """Clear all transitions from buffer."""
+        self.buffer.clear()
 
 
 def softmax_with_temperature(q_values, temperature=1.0):
@@ -53,11 +119,21 @@ class Agent:
 
         self.actions = actions
 
-        # State: game_stage(1) + hole_cards(4) + own_wealth(1) + own_bets(1) + pot_size(1) + public_cards(6) + opponent_wealths(n_players-1) + opponent_active(n_players-1)
-        self.len_private_state = 14 + 2 * (n_players - 1)
-        self.n_inputs = self.len_private_state + 1
+        # State representation (each card encoded as 2 features: rank and suit):
+        # - game_stage(1)
+        # - hole_cards(4) = 2 private cards × 2 features per card (rank, suit)
+        # - own_wealth(1) ← Index 5 (used in pre-training)
+        # - own_bets(1)
+        # - pot_size(1)
+        # - public_cards(10) = 5 public cards × 2 features per card (rank, suit)
+        #   Encodes flop (3 cards), turn (1 card), river (1 card)
+        #   Values are -1 for cards not yet visible (e.g., pre-flop, turn not dealt yet)
+        # - opponent_wealths(n_players-1)
+        # - opponent_active(n_players-1) = 1 if active, 0 if folded
+        # Total: 18 + 2*(n_players-1) features
+        self.len_private_state = 18 + 2 * (n_players - 1)
+        self.n_inputs = self.len_private_state + 1  # +1 for action appended to state
 
-        # Note: the number of inputs is equal to the length of the private state vector plus one (for the actions)
         self.model = get_model(n_actions=len(self.actions), n_inputs=self.n_inputs, learning_rate=learning_rate, hidden_layers=hidden_layers)
 
     def save_model(self, filepath):
@@ -89,6 +165,85 @@ class Agent:
         import tensorflow.keras.backend as K
         self.learning_rate = learning_rate
         K.set_value(self.model.optimizer.learning_rate, learning_rate)
+
+    def pretrain_on_wealth_heuristic(self, n_samples=1000, n_epochs=10, batch_size=32, verbose=1):
+        """
+        Pre-train Q-function with simple heuristic: Q(state, action) ≈ wealth.
+
+        This teaches the network a sensible baseline before SARSA training:
+        - Higher wealth states are more valuable
+        - Initially, all actions are treated equally (refined by SARSA later)
+
+        This reduces variance from random initialization by starting from a
+        reasonable prior instead of random weights.
+
+        Args:
+            n_samples: Number of synthetic training examples to generate
+            n_epochs: Number of training epochs
+            batch_size: Batch size for training
+            verbose: Verbosity level (0=silent, 1=progress bar, 2=one line per epoch)
+        """
+        print(f"\n{'='*70}")
+        print("PRE-TRAINING: Teaching Q(state, action) ≈ wealth")
+        print(f"{'='*70}")
+        print(f"Generating {n_samples} synthetic examples...")
+
+        # Calculate wealth index from state structure (see get_private_state)
+        # State: game_stage(1) + hole_cards(4) + own_wealth(1) + ...
+        WEALTH_INDEX = 1 + 4  # game_stage + 4 hole card features
+
+        # Generate synthetic training data
+        states = []
+        actions = []
+        targets = []
+
+        # Sample many random states with varying wealth levels
+        for _ in range(n_samples):
+            # Random wealth between 10 and 100 (typical game range)
+            wealth = np.random.uniform(10, 100)
+
+            # Create a random state vector (18 features for 3 players)
+            state = np.random.randn(self.len_private_state)
+
+            # Set wealth feature to actual wealth value
+            # (not normalized - matches reward scale used in SARSA training)
+            state[WEALTH_INDEX] = wealth
+
+            # For each action, target Q-value = wealth
+            # This teaches "higher wealth is better, regardless of action"
+            for action in self.actions:
+                states.append(state)
+                actions.append(action)
+                targets.append(wealth)
+
+        # Convert to numpy arrays
+        states = np.array(states)
+        actions = np.array(actions)
+        targets = np.array(targets).reshape(-1, 1)
+
+        # Convert to model input format: [state features + action]
+        all_inputs = []
+        for i in range(len(states)):
+            input_row = np.concatenate([states[i], [actions[i]]])
+            all_inputs.append(input_row)
+        model_inputs = np.array(all_inputs)
+
+        print(f"Training on {len(model_inputs)} (state, action, wealth) tuples for {n_epochs} epochs...")
+
+        # Train the model
+        history = self.model.fit(
+            model_inputs,
+            targets,
+            epochs=n_epochs,
+            batch_size=batch_size,
+            verbose=verbose,
+            validation_split=0.1
+        )
+
+        final_loss = history.history['loss'][-1]
+        print(f"\nPre-training complete! Final loss: {final_loss:.4f}")
+        print(f"Network now initialized with 'wealth is good' prior")
+        print(f"{'='*70}\n")
 
     def describe_learned_q_function(self, n_iter=20):
 
@@ -219,17 +374,16 @@ class Agent:
         first_hole_card = game_state.hole_cards[self.player_index][0]
         second_hole_card = game_state.hole_cards[self.player_index][1]
 
-        public_cards = [-1, -1, -1, -1, -1, -1]
+        # Encode all 5 public cards (flop + turn + river)
+        # Initialize to -1 (meaning "no card visible yet")
+        public_cards = [-1] * 10  # 5 cards × 2 features (rank, suit)
 
+        # Encode whatever public cards are visible based on game stage
+        # PRE_FLOP: 0 cards, FLOP: 3 cards, TURN: 4 cards, RIVER: 5 cards
         if game_state.game_stage != GameStage.PRE_FLOP:
-            public_cards = [
-                game_state.public_cards[0].rank,
-                game_state.public_cards[0].suit,
-                game_state.public_cards[1].rank,
-                game_state.public_cards[1].suit,
-                game_state.public_cards[2].rank,
-                game_state.public_cards[2].suit,
-            ]
+            for i, card in enumerate(game_state.public_cards):
+                public_cards[i * 2] = card.rank
+                public_cards[i * 2 + 1] = card.suit
 
         own_wealth = game_state.wealth[self.player_index]
         total_bet_by_self = game_state.total_bet_by_player(self.player_index)
@@ -304,6 +458,37 @@ class Agent:
 
         self.model.fit(
             x=model_input, y=y, epochs=1, batch_size=1, steps_per_epoch=1, verbose=0
+        )
+
+    def update_q_batch(self, states, actions, target_q_values):
+        """
+        Update Q-function using a batch of transitions.
+
+        Args:
+            states: Batch of private states (batch_size, state_dim)
+            actions: Batch of actions taken (batch_size,)
+            target_q_values: Batch of target Q-values (batch_size,)
+
+        This method is more efficient than calling update_q repeatedly,
+        and the batch sampling reduces variance in gradient estimates.
+        """
+        batch_size = len(states)
+
+        # Create model inputs for the entire batch
+        model_input = np.zeros((batch_size, self.n_inputs))
+
+        for i in range(batch_size):
+            # Build input for this sample (state + action)
+            state_action_input = self.get_model_input(states[i], actions=[actions[i]])
+            model_input[i] = state_action_input[0]
+
+        # Perform single batch update
+        self.model.fit(
+            x=model_input,
+            y=target_q_values,
+            epochs=1,
+            batch_size=batch_size,
+            verbose=0
         )
 
     def get_action(self, game_state, proba_random_action=0.8):
