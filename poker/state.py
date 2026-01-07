@@ -46,6 +46,16 @@ class State:
         #   Or should we move the increment to after round completes?
         self.n_deals = 0
 
+        # Track last deal result for UI display
+        self.last_deal_winners = None
+        self.last_deal_won_by_fold = False
+        self.last_deal_pot = 0
+        self.last_deal_public_cards = []
+        self.last_deal_hole_cards = []
+        self.last_deal_hand_strengths = None
+        self.last_deal_hand_descriptions = None
+        self.last_deal_folded_players = []
+
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
         self.terminal = False
@@ -231,7 +241,17 @@ class State:
             if self.verbose:
                 print(f"Player {self.current_player} bets ${action}")
 
-    def redistribute_wealth_and_reinitialize(self, winning_players):
+    def redistribute_wealth_and_reinitialize(self, winning_players, won_by_fold=False, hand_strengths=None, hand_descriptions=None):
+
+        # Store last deal result for UI display (before state is reset)
+        self.last_deal_winners = list(winning_players)
+        self.last_deal_won_by_fold = won_by_fold
+        self.last_deal_pot = self.total_bets()
+        self.last_deal_public_cards = list(self.public_cards) if self.public_cards else []
+        self.last_deal_hole_cards = [list(cards) for cards in self.hole_cards]  # Deep copy
+        self.last_deal_hand_strengths = list(hand_strengths) if hand_strengths else None
+        self.last_deal_hand_descriptions = list(hand_descriptions) if hand_descriptions else None
+        self.last_deal_folded_players = [i for i in range(self.n_players) if self.has_folded[i]]
 
         losing_players = set(range(self.n_players)).difference(winning_players)
 
@@ -340,7 +360,12 @@ class State:
                     print(f"Public cards: {self.public_cards}")
                     print(f"Hole cards: {self.hole_cards}")
 
-                self.redistribute_wealth_and_reinitialize(winning_players)
+                self.redistribute_wealth_and_reinitialize(
+                    winning_players,
+                    won_by_fold=False,
+                    hand_strengths=hand_strengths,
+                    hand_descriptions=hand_descriptions
+                )
 
         elif over_due_to_folding:
 
@@ -350,7 +375,7 @@ class State:
                 )
 
             winning_players = [next_player]
-            self.redistribute_wealth_and_reinitialize(winning_players)
+            self.redistribute_wealth_and_reinitialize(winning_players, won_by_fold=True)
 
         else:
 

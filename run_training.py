@@ -17,7 +17,7 @@ from datetime import datetime
 def main():
     # Generate timestamped filename with hour/minute to avoid overwrites
     timestamp = datetime.now().strftime("%Y_%m_%d_%H%M")
-    description = "full_curriculum_128x128_batch8"
+    description = "v4_consistent_random_agent_curriculum"
     output_file = f"training_output_{timestamp}_{description}.txt"
 
     print(f"Starting training...")

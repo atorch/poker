@@ -22,17 +22,44 @@ uv run pytest tests/test_simple_stage_transition.py -v -s
 
 # Run grid search for hyperparameter tuning
 uv run python grid_search.py --mode medium
+
+# Play interactively against trained AI agents
+uv run python interactive_play.py              # Normal mode (opponents' cards hidden)
+uv run python interactive_play.py --full-info  # Full info mode (see opponents' cards)
 ```
 
-## Results Summary (Jan 2026)
+## Latest Training Results (Jan 4, 2026)
 
-**✅ SUCCESS: Full Curriculum with Self-Play - Agent Learns Generalizable Poker Strategy**
+**Curriculum Learning with ConsistentRandomAgent - Improved Generalization**
+
+Training configuration: 1500 episodes, lr=0.0003, (128,128) network, batch_size=8
+
+**Final validation performance:**
+- vs RandomAgent: 90.3% ± 1.8% (95% CI)
+- vs SkillfulRandomAgent: 63.0% ± 3.0%
+- vs ConsistentRandomAgent: 30.0% ± 2.8% (below 33.3% baseline)
+
+**Training curriculum:**
+1. Phase 1 (episodes 0-500): 100% RandomAgent
+2. Phase 2 (episodes 500-1000): 50% SkillfulRandomAgent, 50% RandomAgent
+3. Phase 3 (episodes 1000-1500): 40% ConsistentRandomAgent, 30% SkillfulRandomAgent, 30% self-play
+
+**Interactive play quality:** The agent shows more nuanced behavior compared to previous runs (which exhibited pathological "bet $3 with 100% probability" strategies that worked for exploiting RandomAgent but failed against diverse opponents). Current models display:
+- Q-values in reasonable ranges (100-140)
+- Varied action probabilities (60-80% for preferred actions, not deterministic)
+- Context-aware betting (adjusting based on pot size and game stage)
+
+**Known limitation:** Performance vs ConsistentRandomAgent (30.0%) suggests the agent still struggles against opponents who commit to consistent per-deal strategies, indicating room for improvement in adaptation and opponent modeling.
+
+## Previous Training Results (Jan 2026)
+
+**Full Curriculum with Self-Play - Generalizable Poker Strategy**
 
 **Final Performance (1500 episodes, lr=0.0003, (128,128) network, batch_size=8):**
 - **vs RandomAgent: 97.6% ± 0.9%** ← Matches best grid search result!
 - **vs SkillfulRandomAgent: 85.0% ± 2.2%** ← Strong generalization!
 - **Self-play equilibrium: 35.6%** ← Close to Nash (33.3%), no positional bias
-- **Performance drop (Random→Skillful): 12.6 pp** ← EXCELLENT (< 20pp threshold)
+- **Performance drop (Random→Skillful): 12.6 pp** (< 20pp threshold)
 
 **Key Achievement: Proved agent learned generalizable poker fundamentals, not just random exploitation**
 - SkillfulRandomAgent protects premium hands (only folds AA/AK/pairs 5% of time)
@@ -74,9 +101,9 @@ uv run python grid_search.py --mode medium
 - Fold rate increased to 78% by episode 290
 - **Root cause:** Argmax deterministic policy + self-play → everyone learns "folding is safe" → bad equilibrium
 
-## 🎲 CRITICAL: High Training Variance Discovered (Dec 25-30, 2025)
+## High Training Variance Discovered (Dec 25-30, 2025)
 
-**Problem**: Grid search revealed EXTREME variance in training outcomes with identical hyperparameters.
+**Problem**: Grid search revealed significant variance in training outcomes with identical hyperparameters.
 
 ### Variance Study Results (10 seeds per config)
 

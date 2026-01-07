@@ -9,11 +9,12 @@ from poker.state import State, GameStage
 from poker.agent import Agent, ReplayBuffer
 from poker.random_agent import RandomAgent
 from poker.skillful_random_agent import SkillfulRandomAgent
-from poker.config import MIN_INITIAL_WEALTH, MAX_INITIAL_WEALTH, TYPICAL_INITIAL_WEALTH
+from poker.consistent_random_agent import ConsistentRandomAgent
+from poker.config import MIN_INITIAL_WEALTH, MAX_INITIAL_WEALTH, TYPICAL_INITIAL_WEALTH, DEFAULT_ACTIONS
 from poker.cards import Rank
 
 # Description of this training run for logging/versioning
-RUN_DESCRIPTION = "NO epsilon during self-play + smoother curriculum (100%→50%→70% self-play) + lower LR (0.001→0.0002→0.0001) + stronger anchoring (50%/30% random)"
+RUN_DESCRIPTION = "v4 ConsistentRandomAgent Curriculum: Prevents cumulative fold exploitation via strategy commitment per deal. Phase 1: 50% Random, 40% Consistent, 10% Skillful. Phase 2: 60% self-play, 30% Consistent, 10% Skillful. Phase 3: 70% self-play, 30% Consistent (no Random/Skillful). gamma=0.9999 + showdown tracking"
 
 
 def is_premium_hand(private_cards):
@@ -216,7 +217,7 @@ def evaluate_frozen_agent(agent, opponents, n_episodes=1000, max_deals=50000, pr
     }
 
 
-def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_INITIAL_WEALTH, max_initial_wealth=MAX_INITIAL_WEALTH, curriculum_random_episodes=100, curriculum_mixed_episodes=100, epsilon_decay_rate=200, replay_buffer=None):
+def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_INITIAL_WEALTH, max_initial_wealth=MAX_INITIAL_WEALTH, curriculum_random_episodes=100, curriculum_mixed_episodes=100, epsilon_decay_rate=200, replay_buffer=None, gamma=0.99):
 
     # This is (roughly) Sutton and Barto Figure 6.9
     # page 130, TODO compare to page 131
@@ -241,8 +242,9 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
     # Track diagnostics
     episode_stats = {
         'deals': 0,
-        'actions': [],  # List of all actions taken
-        'action_types': {'fold': 0, 'check': 0, 'call': 0, 'raise': 0},  # Detailed action breakdown
+        'actions': [],  # List of ALL actions taken (learning agent + opponents)
+        'learning_agent_actions': [],  # List of ONLY learning agent's actions
+        'action_types': {'fold': 0, 'check': 0, 'call': 0, 'raise': 0},  # Detailed action breakdown (all players)
         'hit_max_deals': False,
         'learning_agent_survived': False,  # wealth > 0 at end
         'learning_agent_won': False,  # had highest wealth at end
@@ -250,6 +252,10 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
         'premium_hands_seen': 0,  # Times agent was dealt premium hand
         'premium_hands_folded': 0,  # Times agent folded premium hand
         'deals_with_premium_checked': set(),  # Track which deals we've already counted premium hands for
+        'showdowns': 0,  # Deals ending with 2+ players showing cards
+        'wins_by_fold': 0,  # Deals ending with everyone else folding
+        'previous_n_deals': 0,  # Track when deals increment to count showdowns
+        'previous_has_folded': None,  # Track has_folded before state.update() to detect showdowns correctly
     }
 
     # The learning agent is always at players[0] with player_index=0
@@ -270,6 +276,18 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
 
     while not state.terminal:
 
+        # Detect when a deal completes and track showdown vs win-by-fold
+        # IMPORTANT: Check BEFORE state.update() so we see has_folded before reset
+        if state.n_deals > episode_stats['previous_n_deals'] and episode_stats['previous_has_folded'] is not None:
+            # A deal just completed - check if it was a showdown using PREVIOUS has_folded
+            # (before initialize_pre_flop reset it)
+            active_players = sum(1 for folded in episode_stats['previous_has_folded'] if not folded)
+            if active_players >= 2:
+                episode_stats['showdowns'] += 1
+            else:
+                episode_stats['wins_by_fold'] += 1
+            episode_stats['previous_n_deals'] = state.n_deals
+
         # Track deals and check max limit
         episode_stats['deals'] = state.n_deals
         if state.n_deals >= max_deals:
@@ -277,8 +295,10 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             state.terminal = True
             break
 
-        # Track action for diagnostics
+        # Track action for diagnostics (all actions)
         episode_stats['actions'].append(action)
+        # Track learning agent's actions separately
+        episode_stats['learning_agent_actions'].append(action)
 
         # Categorize action type (fold/check/call/raise)
         min_bet = state.minimum_legal_bet()
@@ -313,6 +333,9 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
                         episode_stats['premium_hands_folded'] += 1
 
         wealth_before_action = state.wealth[learning_player]
+
+        # Save has_folded BEFORE state.update() (which may call initialize_pre_flop and reset it)
+        episode_stats['previous_has_folded'] = list(state.has_folded)
 
         state.update(action)
 
@@ -362,7 +385,10 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             continuation_value = players[learning_player].predicted_q(
                 next_private_state, next_action
             )
-            updated_guess_for_q = reward + continuation_value
+            # SARSA Bellman equation with discount factor gamma
+            # gamma < 1.0 prevents Q-value divergence by exponentially decaying future rewards
+            # We use gamma=0.99 (light discounting) since poker episodes are finite and fast
+            updated_guess_for_q = reward + gamma * continuation_value
 
         # Update Q-function: either immediately (online) or store in replay buffer (batch)
         if replay_buffer is None:
@@ -412,8 +438,7 @@ def test_game_fairness_with_random_agents(n_players=3, n_episodes=1000, max_deal
     print()
 
     # Create all RandomAgents with identical behavior
-    actions = [-1, 0, 1, 2, 3]
-    random_agents = [RandomAgent(player_index=i, actions=actions) for i in range(n_players)]
+    random_agents = [RandomAgent(player_index=i) for i in range(n_players)]
 
     # Track wins and eliminations for each player position
     wins_by_position = [0] * n_players
@@ -480,8 +505,8 @@ def run_sarsa(
     model_path="models/player_0_latest.h5",
     save_interval=10,
     max_deals=5_000,
-    curriculum_random_episodes=800,
-    curriculum_mixed_episodes=400,
+    curriculum_random_episodes=200,  # REDUCED from 800 to prevent over-fitting to RandomAgent
+    curriculum_mixed_episodes=500,   # INCREASED from 400 to get more SkillfulRandomAgent exposure
     learning_rate=0.0003,
     hidden_layers=(128, 128),
     epsilon_decay_rate=200,
@@ -493,42 +518,54 @@ def run_sarsa(
     skip_equilibrium_test=False,
     random_seed=None,
     pretrain_wealth_heuristic=True,  # Enable by default - improves mean performance dramatically
+    load_existing_model=False,  # Default: fresh training runs to avoid confounding from previous weights
+    gamma=0.9999,  # Discount factor for Bellman equation (stability vs long-term planning trade-off)
 ):
     """
     Train a poker agent using SARSA with curriculum learning.
 
     Defaults use best config from medium grid search (lr=0.0003, (128,128) network, batch_size=8).
-    This config achieved 97.7% vs RandomAgent and 88.7% vs SkillfulRandomAgent.
+
+    IMPROVED CURRICULUM (Jan 2, 2026): Much less RandomAgent exposure to prevent over-fitting
 
     Curriculum stages (default: 1500 episodes total):
-    1. Beat random agents (episodes 0-800)
+    1. Learn basic exploitation (episodes 0-200) - REDUCED from 800
        - All opponents play completely random (RandomAgent)
        - Learn basic profitable patterns: fold trash, bet premium hands
        - Goal: Exploit pure randomness, establish baseline strategy
        - Learning rate: 0.0003 (initial learning rate from grid search)
        - Epsilon-greedy: Decays from ~100% to ~2% for exploration
-       - Longer phase ensures solid foundation before self-play
+       - SHORT phase to avoid learning "always bet $3 = profit"
 
-    2. Mixed opponents (episodes 800-1200)
-       - 50% self-play, 50% RandomAgent/SkillfulRandomAgent (smoother transition)
-       - Introduces SkillfulRandomAgent: protects premium hands (only folds AA/AK/pairs 5% of time)
-       - Goal: Learn generalized strategy, not just exploit random folding
+    2. Learn hand selection (episodes 200-700) - INCREASED from 400
+       - 70% SkillfulRandomAgent, 30% self-play
+       - SkillfulRandomAgent protects premium hands (only folds AA/AK/pairs 5% of time)
+       - Goal: Learn hand selection and positional play, not just "bet until they fold"
        - Learning rate: 0.00006 (0.2x initial, to preserve learned strategies)
        - Epsilon-greedy: DISABLED (0.0) - softmax-only exploration
        - Prevents epsilon from corrupting SARSA Q-targets during multi-agent learning
 
-    3. Self-play with anchoring (episodes 1200+)
-       - 70% self-play, 30% RandomAgent/SkillfulRandomAgent (never 100%!)
+    3. Self-play with strong anchoring (episodes 700+)
+       - 60% self-play, 40% SkillfulRandomAgent (never below 30% Skillful!)
        - Goal: Develop advanced strategies through self-play while preventing collapse
        - Learning rate: 0.00003 (0.1x initial, very conservative for stability)
        - Epsilon-greedy: DISABLED (0.0) - softmax-only exploration
-       - High anchor percentage prevents catastrophic forgetting
+       - HIGH anchor percentage prevents catastrophic forgetting and over-fitting
        - SkillfulRandomAgent provides explicit signal that premium hands have value
 
     Pre-training (pretrain_wealth_heuristic=True):
        - Initializes Q-function to approximate wealth before RL training
        - Dramatically improves mean performance (47.9% → 84.3% in variance study)
        - Does NOT reduce variance but provides better starting point
+
+    Discount Factor (gamma):
+       - gamma=0.99: Light discounting for stability while preserving long-term planning
+       - Prevents Q-value divergence due to unbounded Bellman iteration
+       - Justification for high gamma (close to 1.0):
+         * Episodes have finite duration (someone goes broke quickly)
+         * No "infinite horizon" - terminal states bound Q-values naturally
+         * Poker decisions happen "fast" - future rewards are immediately relevant
+       - Lower gamma (0.9-0.95) would be more stable but sacrifice strategic depth
 
     Experience Replay (batch_size > 1):
        - batch_size=1: Online learning (immediate updates after each transition)
@@ -583,8 +620,14 @@ def run_sarsa(
         for i in range(1, n_players)
     ]
 
-    # Try to load existing model for the learning player
-    model_loaded = learning_agent.load_model(model_path)
+    # Load existing model only if explicitly requested
+    # Default is fresh training to avoid confounding from previous runs
+    # (e.g., inheriting pathological Q-values from over-fitted models)
+    model_loaded = False
+    if load_existing_model:
+        model_loaded = learning_agent.load_model(model_path)
+    else:
+        print(f"Skipping model load (load_existing_model=False) - starting fresh training")
 
     # Pre-train with wealth heuristic if enabled and no model was loaded
     if pretrain_wealth_heuristic and not model_loaded:
@@ -600,18 +643,22 @@ def run_sarsa(
         'deals_per_episode': [],
         'actions_per_episode': [],
         'max_deals_hits': 0,
-        'positive_bet_percentages': [],
-        'fold_percentages': [],
+        'positive_bet_percentages': [],  # All players
+        'fold_percentages': [],  # All players
+        'learning_agent_positive_bet_percentages': [],  # Learning agent only
+        'learning_agent_fold_percentages': [],  # Learning agent only
         'action_types': {'fold': 0, 'check': 0, 'call': 0, 'raise': 0},  # Total counts across all episodes
         'survival_count': 0,  # Episodes where wealth > 0 at end
         'win_count': 0,  # Episodes where agent had highest wealth
         'elimination_count': 0,  # Episodes where wealth went to 0
         'premium_hands_seen': 0,  # Total premium hands dealt
         'premium_hands_folded': 0,  # Total premium hands folded
+        'total_showdowns': 0,  # Total deals ending in showdown (2+ players)
+        'total_wins_by_fold': 0,  # Total deals ending with only 1 player remaining
         # Track metrics by curriculum phase
         'by_phase': {
-            'random': {'episodes': 0, 'survivals': 0, 'wins': 0, 'eliminations': 0,
-                      'premium_seen': 0, 'premium_folded': 0},
+            'diverse': {'episodes': 0, 'survivals': 0, 'wins': 0, 'eliminations': 0,
+                       'premium_seen': 0, 'premium_folded': 0},
             'mixed': {'episodes': 0, 'survivals': 0, 'wins': 0, 'eliminations': 0,
                      'premium_seen': 0, 'premium_folded': 0},
             'self-play': {'episodes': 0, 'survivals': 0, 'wins': 0, 'eliminations': 0,
@@ -622,11 +669,11 @@ def run_sarsa(
     print(f"\nStarting SARSA training with {n_episodes} episodes")
     print(f"Max deals per episode: {max_deals}")
     print(f"Saving models to: {model_path}")
-    print(f"\nCurriculum learning schedule:")
-    print(f"  Episodes 0-{curriculum_random_episodes}: 100% RandomAgent (LR={learning_rate}, epsilon decays)")
-    print(f"  Episodes {curriculum_random_episodes}-{curriculum_random_episodes + curriculum_mixed_episodes}: 50% self-play, 50% Random/Skillful (LR={learning_rate * 0.2}, epsilon=0)")
+    print(f"\nConsistentRandomAgent Curriculum (prevents cumulative fold exploitation):")
+    print(f"  Episodes 0-{curriculum_random_episodes}: 50% RandomAgent, 40% ConsistentRandomAgent, 10% SkillfulRandomAgent (LR={learning_rate}, epsilon decays)")
+    print(f"  Episodes {curriculum_random_episodes}-{curriculum_random_episodes + curriculum_mixed_episodes}: 60% self-play, 30% ConsistentRandomAgent, 10% SkillfulRandomAgent (LR={learning_rate * 0.2}, epsilon=0)")
     if n_episodes > curriculum_random_episodes + curriculum_mixed_episodes:
-        print(f"  Episodes {curriculum_random_episodes + curriculum_mixed_episodes}-{n_episodes}: 70% self-play, 30% Random/Skillful (LR={learning_rate * 0.1}, epsilon=0)")
+        print(f"  Episodes {curriculum_random_episodes + curriculum_mixed_episodes}-{n_episodes}: 70% self-play, 30% ConsistentRandomAgent (no Random/Skillful) (LR={learning_rate * 0.1}, epsilon=0)")
     else:
         print(f"  (No phase 3 - only {n_episodes} episodes total)")
     print("=" * 70)
@@ -648,46 +695,59 @@ def run_sarsa(
     for episode in range(n_episodes):
 
         # Curriculum learning: determine opponent types based on episode number
+        # Phase 1: Diverse opponent mix (episodes 0-200)
+        # 50% RandomAgent, 40% ConsistentRandomAgent, 10% SkillfulRandomAgent
         if episode < curriculum_random_episodes:
-            # Phase 1: All random opponents (use initial learning rate)
             if episode == 0:
                 learning_agent.set_learning_rate(learning_rate)
-            players = [learning_agent] + [
-                RandomAgent(player_index=i, actions=learning_agent.actions)
-                for i in range(1, n_players)
-            ]
-            stage = "random"
-        elif episode < curriculum_random_episodes + curriculum_mixed_episodes:
-            # Phase 2: Mixed opponents - 50% self-play, 50% random/skillful (LR = 0.2x initial)
-            # Smoother transition: More random agents to prevent sudden shift
-            if episode == curriculum_random_episodes:
-                phase2_lr = learning_rate * 0.2
-                learning_agent.set_learning_rate(phase2_lr)
-                print(f"\n[Episode {episode}] Entering mixed phase - reducing learning rate to {phase2_lr}, epsilon to 0.0")
+                print(f"\n[Episode {episode}] Phase 1: Diverse opponent mix (50% Random, 40% Consistent, 10% Skillful)")
 
             opponents = []
             for i in range(1, n_players):
                 rand_val = np.random.rand()
                 if rand_val < 0.50:
-                    # 50% self-play
+                    # 50% RandomAgent
+                    opponents.append(RandomAgent(player_index=i, actions=learning_agent.actions))
+                elif rand_val < 0.90:
+                    # 40% ConsistentRandomAgent (prevents cumulative fold exploitation)
+                    opponents.append(ConsistentRandomAgent(player_index=i, actions=learning_agent.actions))
+                else:
+                    # 10% SkillfulRandomAgent (minimal exposure to avoid selection bias)
+                    opponents.append(SkillfulRandomAgent(player_index=i, actions=learning_agent.actions))
+            players = [learning_agent] + opponents
+            stage = "diverse"
+
+        elif episode < curriculum_random_episodes + curriculum_mixed_episodes:
+            # Phase 2: Transition to self-play with Consistent anchoring (LR = 0.2x initial)
+            # 60% self-play, 30% ConsistentRandomAgent, 10% SkillfulRandomAgent
+            if episode == curriculum_random_episodes:
+                phase2_lr = learning_rate * 0.2
+                learning_agent.set_learning_rate(phase2_lr)
+                print(f"\n[Episode {episode}] Phase 2: Self-play transition (60% self-play, 30% Consistent, 10% Skillful) - reducing learning rate to {phase2_lr}, epsilon to 0.0")
+
+            opponents = []
+            for i in range(1, n_players):
+                rand_val = np.random.rand()
+                if rand_val < 0.60:
+                    # 60% self-play
                     opponent_agents[i-1].model.set_weights(learning_agent.model.get_weights())
                     opponents.append(opponent_agents[i-1])
-                elif rand_val < 0.75:
-                    # 25% RandomAgent
-                    opponents.append(RandomAgent(player_index=i, actions=learning_agent.actions))
+                elif rand_val < 0.90:
+                    # 30% ConsistentRandomAgent (maintains diverse training signal)
+                    opponents.append(ConsistentRandomAgent(player_index=i, actions=learning_agent.actions))
                 else:
-                    # 25% SkillfulRandomAgent
+                    # 10% SkillfulRandomAgent (minimal)
                     opponents.append(SkillfulRandomAgent(player_index=i, actions=learning_agent.actions))
             players = [learning_agent] + opponents
             stage = "mixed"
+
         else:
-            # Phase 3: Self-play with anchoring - 70% self-play, 30% random/skillful (LR = 0.1x initial)
-            # NEVER 100% self-play - prevents catastrophic forgetting!
-            # Higher anchor percentage for smoother learning
+            # Phase 3: Heavy self-play with Consistent anchoring (LR = 0.1x initial)
+            # 70% self-play, 30% ConsistentRandomAgent (no more Random/Skillful)
             if episode == curriculum_random_episodes + curriculum_mixed_episodes:
                 phase3_lr = learning_rate * 0.1
                 learning_agent.set_learning_rate(phase3_lr)
-                print(f"\n[Episode {episode}] Entering self-play phase - reducing learning rate to {phase3_lr}")
+                print(f"\n[Episode {episode}] Phase 3: Heavy self-play (70% self-play, 30% Consistent) - reducing learning rate to {phase3_lr}")
 
             opponents = []
             for i in range(1, n_players):
@@ -696,12 +756,9 @@ def run_sarsa(
                     # 70% self-play
                     opponent_agents[i-1].model.set_weights(learning_agent.model.get_weights())
                     opponents.append(opponent_agents[i-1])
-                elif rand_val < 0.85:
-                    # 15% RandomAgent
-                    opponents.append(RandomAgent(player_index=i, actions=learning_agent.actions))
                 else:
-                    # 15% SkillfulRandomAgent
-                    opponents.append(SkillfulRandomAgent(player_index=i, actions=learning_agent.actions))
+                    # 30% ConsistentRandomAgent (prevents catastrophic forgetting, no exploitation learning)
+                    opponents.append(ConsistentRandomAgent(player_index=i, actions=learning_agent.actions))
             players = [learning_agent] + opponents
             stage = "self-play"
 
@@ -709,7 +766,8 @@ def run_sarsa(
                                          curriculum_random_episodes=curriculum_random_episodes,
                                          curriculum_mixed_episodes=curriculum_mixed_episodes,
                                          epsilon_decay_rate=epsilon_decay_rate,
-                                         replay_buffer=replay_buffer)
+                                         replay_buffer=replay_buffer,
+                                         gamma=gamma)
 
         # Track statistics
         all_stats['deals_per_episode'].append(episode_stats['deals'])
@@ -738,11 +796,15 @@ def run_sarsa(
         all_stats['by_phase'][stage]['premium_seen'] += episode_stats.get('premium_hands_seen', 0)
         all_stats['by_phase'][stage]['premium_folded'] += episode_stats.get('premium_hands_folded', 0)
 
+        # Track showdown frequency
+        all_stats['total_showdowns'] += episode_stats.get('showdowns', 0)
+        all_stats['total_wins_by_fold'] += episode_stats.get('wins_by_fold', 0)
+
         # Aggregate action type counts
         for action_type in ['fold', 'check', 'call', 'raise']:
             all_stats['action_types'][action_type] += episode_stats['action_types'][action_type]
 
-        # Calculate action percentages
+        # Calculate action percentages for ALL players
         actions = episode_stats['actions']
         if actions:
             positive_bets = sum(1 for a in actions if a > 0)
@@ -754,6 +816,19 @@ def run_sarsa(
             pct_fold = 0
         all_stats['positive_bet_percentages'].append(pct_positive)
         all_stats['fold_percentages'].append(pct_fold)
+
+        # Calculate action percentages for LEARNING AGENT ONLY
+        agent_actions = episode_stats['learning_agent_actions']
+        if agent_actions:
+            agent_positive_bets = sum(1 for a in agent_actions if a > 0)
+            agent_folds = sum(1 for a in agent_actions if a < 0)
+            agent_pct_positive = 100 * agent_positive_bets / len(agent_actions)
+            agent_pct_fold = 100 * agent_folds / len(agent_actions)
+        else:
+            agent_pct_positive = 0
+            agent_pct_fold = 0
+        all_stats['learning_agent_positive_bet_percentages'].append(agent_pct_positive)
+        all_stats['learning_agent_fold_percentages'].append(agent_pct_fold)
 
         # Experience replay: Sample and train on batches (only if batch_size > 1)
         if replay_buffer is not None and len(replay_buffer) >= batch_size:
@@ -770,11 +845,11 @@ def run_sarsa(
                     model_input = learning_agent.get_model_input(next_states[i], learning_agent.actions)
                     next_q_values = learning_agent.model.predict(model_input, verbose=0)[:, 0]
 
-                    # SARSA target: reward + Q(next_state, next_action)
+                    # SARSA target: reward + gamma * Q(next_state, next_action)
                     # Use max for simplicity (this is closer to Q-learning)
                     # TODO: Store next_action in buffer for true SARSA
                     max_next_q = np.max(next_q_values)
-                    target_q_values[i] = rewards[i] + max_next_q
+                    target_q_values[i] = rewards[i] + gamma * max_next_q
 
                 # Update Q-function with mini-batch
                 learning_agent.update_q_batch(states, actions, target_q_values)
@@ -782,17 +857,28 @@ def run_sarsa(
         # Print progress every 10 episodes with diagnostics
         if episode % 10 == 0 and episode > 0:
             recent_deals = all_stats['deals_per_episode'][-10:] if episode > 0 else [episode_stats['deals']]
-            recent_positive_pct = all_stats['positive_bet_percentages'][-10:] if episode > 0 else [pct_positive]
-            recent_fold_pct = all_stats['fold_percentages'][-10:] if episode > 0 else [pct_fold]
+            recent_agent_fold_pct = all_stats['learning_agent_fold_percentages'][-10:] if episode > 0 else [agent_pct_fold]
+            recent_agent_bet_pct = all_stats['learning_agent_positive_bet_percentages'][-10:] if episode > 0 else [agent_pct_positive]
             avg_deals = np.mean(recent_deals)
-            avg_positive_pct = np.mean(recent_positive_pct)
-            avg_fold_pct = np.mean(recent_fold_pct)
+            avg_agent_fold_pct = np.mean(recent_agent_fold_pct)
+            avg_agent_bet_pct = np.mean(recent_agent_bet_pct)
             win_rate = 100 * all_stats['win_count'] / (episode + 1)
 
             # Diagnostic: probability of betting with pocket aces
             prob_bet_aces = get_pocket_aces_bet_probability(learning_agent)
 
-            print(f"Episode {episode:4d} ({stage:10s}) | Wins: {win_rate:5.1f}% | Deals: {avg_deals:5.1f} | Fold: {avg_fold_pct:5.1f}% | Bet>0: {avg_positive_pct:5.1f}% | P(bet|AA): {100*prob_bet_aces:5.1f}%")
+            # NEW: Monitor Q-value magnitudes to catch pathological over-fitting early
+            # Sample Q-values from random state to check for explosion
+            test_state = State(n_players=n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
+            test_private_state = learning_agent.get_private_state(test_state)
+            test_input = learning_agent.get_model_input(test_private_state, learning_agent.actions)
+            test_q_values = learning_agent.model.predict(test_input, verbose=0)[:, 0]
+            max_q = np.max(np.abs(test_q_values))
+
+            # Warning: if max |Q| > 10k, model is likely over-fitting
+            q_warning = " ⚠️ Q-EXPLOSION!" if max_q > 10000 else ""
+
+            print(f"Episode {episode:4d} ({stage:10s}) | Wins: {win_rate:5.1f}% | Deals: {avg_deals:5.1f} | Agent Fold: {avg_agent_fold_pct:5.1f}% | Agent Bet>0: {avg_agent_bet_pct:5.1f}% | P(bet|AA): {100*prob_bet_aces:5.1f}% | MaxQ: {max_q:7.0f}{q_warning}")
 
         # Save model periodically
         if episode > 0 and episode % save_interval == 0:
@@ -839,6 +925,28 @@ def run_sarsa(
                 if episode == curriculum_random_episodes:
                     print(f"  Continuing to mixed phase anyway...")
 
+            # Test vs ConsistentRandomAgent
+            print(f"\nTesting frozen agent vs ConsistentRandomAgent (no learning, no exploration)...")
+            consistent_test_opponents = [
+                ConsistentRandomAgent(player_index=i, actions=learning_agent.actions)
+                for i in range(1, n_players)
+            ]
+            results_consistent = evaluate_frozen_agent(
+                learning_agent, consistent_test_opponents, n_episodes=300, max_deals=max_deals
+            )
+
+            print(f"\nFrozen evaluation vs ConsistentRandomAgent at episode {episode}:")
+            print(f"  Win rate:        {100 * results_consistent['win_rate']:.1f}% ± {100 * results_consistent['ci_margins']['win']:.1f}% (95% CI)")
+            print(f"  Survival rate:   {100 * results_consistent['survival_rate']:.1f}% ± {100 * results_consistent['ci_margins']['survival']:.1f}%")
+            print(f"  Elimination rate: {100 * results_consistent['elimination_rate']:.1f}% ± {100 * results_consistent['ci_margins']['elimination']:.1f}%")
+            print(f"  Games played: 300, Timeouts: {results_consistent['timeouts']}")
+            print(f"  Expected: >33.3% win rate")
+
+            if results_consistent['win_rate'] > 1.0 / n_players:
+                print(f"  ✓ PASS: Agent beats ConsistentRandomAgent")
+            else:
+                print(f"  ❌ FAIL: Agent does NOT beat ConsistentRandomAgent")
+
             # Run sanity checks on Q-function
             print(f"\nSanity check at episode {episode}:")
             learning_agent.sanity_check_learned_strategy()
@@ -868,8 +976,29 @@ def run_sarsa(
     print(f"Average deals per episode: {np.mean(all_stats['deals_per_episode']):.1f}")
     print(f"Median deals per episode: {np.median(all_stats['deals_per_episode']):.1f}")
     print(f"Max deals in any episode: {np.max(all_stats['deals_per_episode'])}")
-    print(f"Average % positive bets: {np.mean(all_stats['positive_bet_percentages']):.1f}%")
-    print(f"Average % folds: {np.mean(all_stats['fold_percentages']):.1f}%")
+
+    # Showdown frequency tracking
+    total_deals = all_stats['total_showdowns'] + all_stats['total_wins_by_fold']
+    if total_deals > 0:
+        showdown_pct = 100 * all_stats['total_showdowns'] / total_deals
+        print(f"\nShowdown frequency:")
+        print(f"  Total deals: {total_deals}")
+        print(f"  Showdowns (2+ players): {all_stats['total_showdowns']} ({showdown_pct:.1f}%)")
+        print(f"  Wins by fold (1 player): {all_stats['total_wins_by_fold']} ({100 - showdown_pct:.1f}%)")
+        if showdown_pct < 20:
+            print(f"  ⚠️  WARNING: Low showdown rate - agent may not be learning hand strength properly")
+        elif showdown_pct < 40:
+            print(f"  ✓ Moderate showdown rate - some hand evaluation learning")
+        else:
+            print(f"  ✓ Good showdown rate - agent sees many hand comparisons")
+
+    print(f"\n[All Players]")
+    print(f"  Average % positive bets: {np.mean(all_stats['positive_bet_percentages']):.1f}%")
+    print(f"  Average % folds: {np.mean(all_stats['fold_percentages']):.1f}%")
+
+    print(f"\n[Learning Agent Only]")
+    print(f"  Average % positive bets: {np.mean(all_stats['learning_agent_positive_bet_percentages']):.1f}%")
+    print(f"  Average % folds: {np.mean(all_stats['learning_agent_fold_percentages']):.1f}%")
 
     # Detailed action breakdown
     total_actions = sum(all_stats['action_types'].values())
@@ -896,7 +1025,7 @@ def run_sarsa(
 
     # Breakdown by curriculum stage
     print(f"\nPerformance by curriculum phase:")
-    for phase_name in ['random', 'mixed', 'self-play']:
+    for phase_name in ['diverse', 'mixed', 'self-play']:
         phase_data = all_stats['by_phase'][phase_name]
         n_eps = phase_data['episodes']
         if n_eps > 0:
@@ -990,9 +1119,32 @@ def run_sarsa(
     else:
         print(f"    ❌ FAIL: Agent does not beat SkillfulRandomAgent (learned exploitative, not generalizable strategy)")
 
-    # Validation 3: Frozen self-play equilibrium test (optional - skip during grid search)
+    print(f"\n[Validation 3] Testing frozen agent vs {n_players-1} ConsistentRandomAgent opponent(s) ({n_players}-player game)...")
+    print(f"  Running 1000 episodes with no learning and no exploration...")
+    print(f"  ConsistentRandomAgent commits to strategy per deal (prevents cumulative fold exploitation)")
+    consistent_opponents = [
+        ConsistentRandomAgent(player_index=i, actions=learning_agent.actions)
+        for i in range(1, n_players)
+    ]
+    results_consistent = evaluate_frozen_agent(
+        learning_agent, consistent_opponents, n_episodes=1000, max_deals=max_deals
+    )
+    print(f"\n  Results:")
+    print(f"    Win rate:        {100 * results_consistent['win_rate']:.1f}% ± {100 * results_consistent['ci_margins']['win']:.1f}% (95% CI)")
+    print(f"    Survival rate:   {100 * results_consistent['survival_rate']:.1f}% ± {100 * results_consistent['ci_margins']['survival']:.1f}%")
+    print(f"    Elimination rate: {100 * results_consistent['elimination_rate']:.1f}% ± {100 * results_consistent['ci_margins']['elimination']:.1f}%")
+    print(f"    Games: {results_consistent['wins']} wins, {results_consistent['survivals']} survivals, {results_consistent['eliminations']} eliminations (out of 1000)")
+    if results_consistent['timeouts'] > 0:
+        print(f"    Timeouts: {results_consistent['timeouts']}")
+
+    if results_consistent['win_rate'] > fair_share_random:
+        print(f"    ✓ PASS: Agent beats ConsistentRandomAgent ({100 * results_consistent['win_rate']:.1f}% > {100*fair_share_random:.1f}%)")
+    else:
+        print(f"    ❌ FAIL: Agent does NOT beat ConsistentRandomAgent (should be >{100*fair_share_random:.1f}%)")
+
+    # Validation 4: Frozen self-play equilibrium test (optional - skip during grid search)
     if not skip_equilibrium_test:
-        print(f"\n[Validation 3] Frozen self-play equilibrium test...")
+        print(f"\n[Validation 4] Frozen self-play equilibrium test...")
         print(f"  Testing for positional bias and Nash convergence...")
         print(f"  All {n_players} players use identical frozen policy (learning agent's weights)")
         print(f"  Running 1000 episodes...")
