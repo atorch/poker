@@ -5,7 +5,7 @@ from collections import deque
 from poker.cards import Card, Rank, Suit
 from poker.state import GameStage, State
 from poker.q_function import get_model
-from poker.config import TYPICAL_INITIAL_WEALTH
+from poker.config import TYPICAL_INITIAL_WEALTH, DEFAULT_ACTIONS, MAX_INITIAL_WEALTH
 
 
 class ReplayBuffer:
@@ -109,7 +109,10 @@ def softmax_with_temperature(q_values, temperature=1.0):
 
 
 class Agent:
-    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3], n_players=3, temperature=1.0, learning_rate=0.001, hidden_layers=None):
+    def __init__(self, player_index=0, actions=None, n_players=3, temperature=1.0, learning_rate=0.001, hidden_layers=None):
+
+        if actions is None:
+            actions = DEFAULT_ACTIONS
 
         self.player_index = player_index
         self.n_players = n_players
@@ -166,16 +169,24 @@ class Agent:
         self.learning_rate = learning_rate
         K.set_value(self.model.optimizer.learning_rate, learning_rate)
 
-    def pretrain_on_wealth_heuristic(self, n_samples=1000, n_epochs=10, batch_size=32, verbose=1):
+    def pretrain_on_wealth_heuristic(self, n_samples=2000, n_epochs=500, batch_size=32, verbose=1):
         """
-        Pre-train Q-function with simple heuristic: Q(state, action) ≈ wealth.
+        Pre-train Q-function with improved heuristics:
+        1. Q(state, action) ≈ wealth (baseline for all states)
+        2. Q(bet | strong hand) >> Q(fold | strong hand) - teach that betting with strong hands is valuable
+        3. Q(bet | strong hand, large pot) gets extra bonus - teach to bet when pot is worth winning
+        4. Q(bet | weak hand) < Q(fold | weak hand) - teach that betting with trash loses money
 
-        This teaches the network a sensible baseline before SARSA training:
+        This teaches the network four key poker concepts before SARSA training:
         - Higher wealth states are more valuable
-        - Initially, all actions are treated equally (refined by SARSA later)
+        - Strong hands should bet/raise, not fold
+        - Large pots with strong hands justify aggressive play
+        - Weak hands should fold or check, not bet
 
-        This reduces variance from random initialization by starting from a
-        reasonable prior instead of random weights.
+        Improvements over original:
+        - Wider wealth range: 0 to n_players * MAX_INITIAL_WEALTH (covers full game range)
+        - Hand strength aware: Strong hands get Q(bet) >> Q(fold), weak hands get Q(fold) ≥ Q(bet)
+        - Pot size aware: Large pots with strong hands get bonus Q-value
 
         Args:
             n_samples: Number of synthetic training examples to generate
@@ -184,37 +195,132 @@ class Agent:
             verbose: Verbosity level (0=silent, 1=progress bar, 2=one line per epoch)
         """
         print(f"\n{'='*70}")
-        print("PRE-TRAINING: Teaching Q(state, action) ≈ wealth")
+        print("PRE-TRAINING: Teaching strategic Q-function initialization")
         print(f"{'='*70}")
+        print(f"Key concepts:")
+        print(f"  1. Q ≈ wealth (higher wealth is better)")
+        print(f"  2. Q(bet | strong hand) >> Q(fold | strong hand)")
+        print(f"  3. Q(bet | strong hand, large pot) gets extra bonus")
         print(f"Generating {n_samples} synthetic examples...")
 
-        # Calculate wealth index from state structure (see get_private_state)
-        # State: game_stage(1) + hole_cards(4) + own_wealth(1) + ...
-        WEALTH_INDEX = 1 + 4  # game_stage + 4 hole card features
+        # State indices (see get_private_state for structure)
+        GAME_STAGE_INDEX = 0
+        HOLE_CARD_1_RANK = 1
+        HOLE_CARD_1_SUIT = 2
+        HOLE_CARD_2_RANK = 3
+        HOLE_CARD_2_SUIT = 4
+        WEALTH_INDEX = 5
+        OWN_BETS_INDEX = 6
+        POT_SIZE_INDEX = 7
+
+        # Maximum possible wealth (win everything in a full game)
+        max_wealth = self.n_players * MAX_INITIAL_WEALTH
 
         # Generate synthetic training data
         states = []
         actions = []
         targets = []
 
-        # Sample many random states with varying wealth levels
+        # Sample many random states with varying wealth, hands, and pot sizes
         for _ in range(n_samples):
-            # Random wealth between 10 and 100 (typical game range)
-            wealth = np.random.uniform(10, 100)
+            # (a) Wide range of wealth values: 0 to max_wealth
+            # This ensures we learn Q-values for all possible wealth states
+            wealth = np.random.uniform(0.1, max_wealth)  # Avoid exactly 0 to prevent division issues
 
-            # Create a random state vector (18 features for 3 players)
-            state = np.random.randn(self.len_private_state)
+            # Create a state vector with REASONABLE DEFAULTS (not random noise)
+            # This gives the network a cleaner signal to learn from
+            state = np.zeros(self.len_private_state)
 
-            # Set wealth feature to actual wealth value
-            # (not normalized - matches reward scale used in SARSA training)
+            # Set game stage to pre-flop (most common)
+            state[GAME_STAGE_INDEX] = 0  # GameStage.PRE_FLOP
+
+            # Generate random hole cards to determine hand strength
+            # Sample ranks uniformly from 2 (TWO) to 14 (ACE)
+            rank1 = int(np.random.randint(2, 15))
+            rank2 = int(np.random.randint(2, 15))
+            suit1 = int(np.random.randint(1, 5))  # 1-4 for suits
+            suit2 = int(np.random.randint(1, 5))
+
+            state[HOLE_CARD_1_RANK] = rank1
+            state[HOLE_CARD_1_SUIT] = suit1
+            state[HOLE_CARD_2_RANK] = rank2
+            state[HOLE_CARD_2_SUIT] = suit2
+
+            # Set wealth feature
             state[WEALTH_INDEX] = wealth
 
-            # For each action, target Q-value = wealth
-            # This teaches "higher wealth is better, regardless of action"
+            # Own bets: small random amount
+            state[OWN_BETS_INDEX] = np.random.uniform(0, 3)
+
+            # Random pot size (0 to 2x current wealth, since multiple players contribute)
+            pot_size = np.random.uniform(0, min(2 * wealth, max_wealth))
+            state[POT_SIZE_INDEX] = pot_size
+
+            # Public cards: keep at -1 (not visible) for pre-flop
+            # (already set to 0 by np.zeros, will update later if needed)
+            for i in range(8, 18):  # Indices 8-17 are public cards
+                state[i] = -1
+
+            # Opponent wealths: reasonable random values
+            for i in range(self.n_players - 1):
+                opp_wealth_idx = 18 + i
+                state[opp_wealth_idx] = np.random.uniform(0.1, max_wealth)
+
+            # Opponent active: assume all active (1)
+            for i in range(self.n_players - 1):
+                opp_active_idx = 18 + (self.n_players - 1) + i
+                state[opp_active_idx] = 1
+
+            # (b) & (c) Determine hand strength and pot size
+            is_strong_hand = self._is_strong_hand_from_ranks(rank1, rank2)
+
+            # Classify pot size
+            large_pot = pot_size > wealth * 0.5  # Pot > 50% of our wealth
+
+            # (b) Assign Q-values based on action and hand strength
             for action in self.actions:
+                is_fold = action < 0
+                is_bet_or_raise = action > 0
+
+                # Baseline: Q ≈ wealth
+                q_value = wealth
+
+                if is_strong_hand:
+                    if is_bet_or_raise:
+                        # Strong hand + betting = GOOD
+                        # Multiply by 2.0 to teach "bet with strong hands"
+                        q_value = wealth * 2.0
+
+                        # (c) Large pot + strong hand + betting = EVEN BETTER
+                        # Add pot bonus to teach "bet to win the pot"
+                        if large_pot:
+                            q_value = wealth * 2.0 + pot_size * 0.5
+
+                    elif is_fold:
+                        # Strong hand + folding = BAD
+                        # Penalize heavily to teach "don't fold strong hands"
+                        q_value = wealth * 0.1
+
+                else:
+                    # Weak/medium hands: teach that betting with trash is bad
+                    # Q(fold) = wealth (preserve current wealth)
+                    # Q(call/check) = wealth (neutral, can see more cards cheaply)
+                    # Q(bet/raise) = wealth * 0.7 (expected to lose when betting weak hand)
+
+                    if is_fold:
+                        # Folding preserves current wealth
+                        q_value = wealth
+                    elif action == 0:
+                        # Calling/checking is neutral (might see more cards)
+                        q_value = wealth
+                    else:
+                        # Betting with weak hands is -EV
+                        # Penalize to teach "don't bet 7-2"
+                        q_value = wealth * 0.7
+
                 states.append(state)
                 actions.append(action)
-                targets.append(wealth)
+                targets.append(q_value)
 
         # Convert to numpy arrays
         states = np.array(states)
@@ -228,7 +334,7 @@ class Agent:
             all_inputs.append(input_row)
         model_inputs = np.array(all_inputs)
 
-        print(f"Training on {len(model_inputs)} (state, action, wealth) tuples for {n_epochs} epochs...")
+        print(f"Training on {len(model_inputs)} (state, action, Q-target) tuples for {n_epochs} epochs...")
 
         # Train the model
         history = self.model.fit(
@@ -242,8 +348,37 @@ class Agent:
 
         final_loss = history.history['loss'][-1]
         print(f"\nPre-training complete! Final loss: {final_loss:.4f}")
-        print(f"Network now initialized with 'wealth is good' prior")
+        print(f"Network now initialized with:")
+        print(f"  ✓ Wealth awareness (Q ≈ wealth)")
+        print(f"  ✓ Hand strength awareness (bet strong hands, don't fold them)")
+        print(f"  ✓ Pot awareness (large pots justify aggressive play with strong hands)")
+        print(f"  ✓ Weak hand discipline (folding/checking better than betting with trash)")
         print(f"{'='*70}\n")
+
+    def _is_strong_hand_from_ranks(self, rank1, rank2):
+        """
+        Helper for pre-training: Determine if hole cards constitute a strong hand.
+
+        Strong hands (same definition as SkillfulRandomAgent and ConsistentRandomAgent):
+        - Any hand with an Ace (rank 14)
+        - Pair of tens or better (TT, JJ, QQ, KK, AA)
+
+        Args:
+            rank1: Rank of first card (2-14, where 14=Ace)
+            rank2: Rank of second card (2-14, where 14=Ace)
+
+        Returns:
+            bool: True if hand is strong
+        """
+        # Any hand with an Ace is strong
+        if rank1 == 14 or rank2 == 14:  # ACE = 14
+            return True
+
+        # Pair of tens or better (TT+)
+        if rank1 == rank2 and rank1 >= 10:  # TEN = 10
+            return True
+
+        return False
 
     def describe_learned_q_function(self, n_iter=20):
 
