@@ -1,0 +1,237 @@
+adrian@adrian-Precision-5530:~/poker$ uv run python analyze_grid_search.py
+Loaded 3 results from grid_search_results/results.jsonl
+  Completed: 3
+  Failed: 0
+
+================================================================================
+SUMMARY STATISTICS
+================================================================================
+
+final_frozen_win_rate_vs_random:
+  Mean:   0.4767
+  Std:    0.4355
+  Min:    0.0300
+  Max:    0.9000
+  Median: 0.5000
+
+final_frozen_win_rate_vs_skillful:
+  Mean:   0.2967
+  Std:    0.4210
+  Min:    0.0100
+  Max:    0.7800
+  Median: 0.1000
+
+final_prob_bet_pocket_aces:
+  Mean:   0.6834
+  Std:    0.2772
+  Min:    0.4219
+  Max:    0.9740
+  Median: 0.6543
+
+robustness_std_win_rate:
+  Mean:   0.1901
+  Std:    0.1072
+  Min:    0.0873
+  Max:    0.3013
+  Median: 0.1818
+
+================================================================================
+TOP 3 CONFIGURATIONS BY: final_frozen_win_rate_vs_random
+================================================================================
+
+1. Config ID: lr0.0003_net64x64_49153b5b
+   final_frozen_win_rate_vs_random: 0.9000
+   Learning rate: 0.0003
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  90.0%
+     - Win rate (skillful): 78.0%
+     - P(bet|AA): 97.4%
+     - Sanity checks passed: True
+     - Robustness (std): 30.1%
+     - Episodes to 40% win rate: 100.0
+
+2. Config ID: lr0.001_net64x64_10b451d2
+   final_frozen_win_rate_vs_random: 0.5000
+   Learning rate: 0.001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  50.0%
+     - Win rate (skillful): 10.0%
+     - P(bet|AA): 65.4%
+     - Sanity checks passed: False
+     - Robustness (std): 18.2%
+     - Episodes to 40% win rate: 200.0
+
+3. Config ID: lr0.0001_net64x64_592b9a8e
+   final_frozen_win_rate_vs_random: 0.0300
+   Learning rate: 0.0001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  3.0%
+     - Win rate (skillful): 1.0%
+     - P(bet|AA): 42.2%
+     - Sanity checks passed: False
+     - Robustness (std): 8.7%
+     - Episodes to 40% win rate: nan
+
+================================================================================
+TOP 3 CONFIGURATIONS BY: final_prob_bet_pocket_aces
+================================================================================
+
+1. Config ID: lr0.0003_net64x64_49153b5b
+   final_prob_bet_pocket_aces: 0.9740
+   Learning rate: 0.0003
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  90.0%
+     - Win rate (skillful): 78.0%
+     - P(bet|AA): 97.4%
+     - Sanity checks passed: True
+     - Robustness (std): 30.1%
+     - Episodes to 40% win rate: 100.0
+
+2. Config ID: lr0.001_net64x64_10b451d2
+   final_prob_bet_pocket_aces: 0.6543
+   Learning rate: 0.001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  50.0%
+     - Win rate (skillful): 10.0%
+     - P(bet|AA): 65.4%
+     - Sanity checks passed: False
+     - Robustness (std): 18.2%
+     - Episodes to 40% win rate: 200.0
+
+3. Config ID: lr0.0001_net64x64_592b9a8e
+   final_prob_bet_pocket_aces: 0.4219
+   Learning rate: 0.0001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  3.0%
+     - Win rate (skillful): 1.0%
+     - P(bet|AA): 42.2%
+     - Sanity checks passed: False
+     - Robustness (std): 8.7%
+     - Episodes to 40% win rate: nan
+
+================================================================================
+TOP 3 CONFIGURATIONS BY: robustness_std_win_rate
+================================================================================
+
+1. Config ID: lr0.0001_net64x64_592b9a8e
+   robustness_std_win_rate: 0.0873
+   Learning rate: 0.0001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  3.0%
+     - Win rate (skillful): 1.0%
+     - P(bet|AA): 42.2%
+     - Sanity checks passed: False
+     - Robustness (std): 8.7%
+     - Episodes to 40% win rate: nan
+
+2. Config ID: lr0.001_net64x64_10b451d2
+   robustness_std_win_rate: 0.1818
+   Learning rate: 0.001
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  50.0%
+     - Win rate (skillful): 10.0%
+     - P(bet|AA): 65.4%
+     - Sanity checks passed: False
+     - Robustness (std): 18.2%
+     - Episodes to 40% win rate: 200.0
+
+3. Config ID: lr0.0003_net64x64_49153b5b
+   robustness_std_win_rate: 0.3013
+   Learning rate: 0.0003
+   Network size: (64, 64)
+   N episodes: 300
+   Epsilon decay: 200
+   Temperature: 1.0
+   Metrics:
+     - Win rate (random):  90.0%
+     - Win rate (skillful): 78.0%
+     - P(bet|AA): 97.4%
+     - Sanity checks passed: True
+     - Robustness (std): 30.1%
+     - Episodes to 40% win rate: 100.0
+
+================================================================================
+HYPERPARAMETER SENSITIVITY ANALYSIS
+================================================================================
+
+Impact on final_frozen_win_rate_vs_random:
+(Mean win rate for each hyperparameter value)
+
+
+learning_rate:
+               mean  std  count
+learning_rate                  
+0.0001         0.03  NaN      1
+0.0003         0.90  NaN      1
+0.0010         0.50  NaN      1
+  → Range: 87.0% (larger = more sensitive)
+
+network_size:
+                  mean       std  count
+network_size                           
+(64, 64)      0.476667  0.435469      3
+  → Range: 0.0% (larger = more sensitive)
+
+n_episodes:
+                mean       std  count
+n_episodes                           
+300         0.476667  0.435469      3
+  → Range: 0.0% (larger = more sensitive)
+
+epsilon_decay_rate:
+                        mean       std  count
+epsilon_decay_rate                           
+200                 0.476667  0.435469      3
+  → Range: 0.0% (larger = more sensitive)
+
+temperature:
+                 mean       std  count
+temperature                           
+1.0          0.476667  0.435469      3
+  → Range: 0.0% (larger = more sensitive)
+
+================================================================================
+GENERATING VISUALIZATIONS
+================================================================================
+  Saved: grid_search_results/plots/learning_rate_vs_win_rate.png
+  Saved: grid_search_results/plots/prob_bet_aa_distribution.png
+  Saved: grid_search_results/plots/win_rate_vs_prob_bet_aa.png
+
+All plots saved to: grid_search_results/plots/
+
+================================================================================
+Summary saved to: grid_search_results/results_summary.csv
+================================================================================
+

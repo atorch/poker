@@ -339,3 +339,19 @@ def test_state():
         / len(winning_players)
     )
     assert state.wealth[winning_players[0]] == wealth_before_winning + amount_won
+
+
+def test_per_player_initial_stacks():
+    state = State(n_players=3, initial_wealth=[5, 20, 35], initial_dealer=0)
+    assert state.wealth == [5, 20, 35]
+    # Note: no side pots, so nobody can put in more than the shortest active stack
+    assert state.maximum_legal_bet() <= 5
+
+
+def test_raises_are_counted_by_player():
+    state = State(n_players=3, initial_wealth=20, initial_dealer=0)
+    state.update(3)  # dealer raises
+    state.update(3)  # small blind re-raises
+    state.update(2)  # big blind calls
+    stage_counts = state.raises_by_stage_and_player[state.game_stage]
+    assert stage_counts == [1, 1, 0] and state.raises_by_stage[state.game_stage] == 2

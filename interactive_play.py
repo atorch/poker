@@ -4,9 +4,13 @@ Interactive poker game where you play against 2 AI agents.
 
 Usage:
     uv run python interactive_play.py              # Normal mode (hidden opponents' cards)
-    uv run python interactive_play.py --full-info  # Full info mode (see opponents' cards)
+    uv run python interactive_play.py --full-info  # Full info mode (see opponents' cards and the AI's policy)
+    uv run python interactive_play.py --model models/player_0_latest.h5   # the old Jan 2026 model
+    uv run python interactive_play.py --model tag                         # a scripted bot
 
-The AI agents use the latest trained model from models/player_0_latest.weights.h5
+Both AI seats use the same agent: by default the TD agent trained against the scripted pool
+(models/2026-10-03_td_pool/final.pt). --model takes anything poker.benchmark accepts: a .pt
+model, an old .h5 / .weights.h5 model, or a scripted agent name.
 You are player 0, and you'll be prompted for actions each turn.
 """
 
@@ -15,9 +19,44 @@ import sys
 import numpy as np
 
 from poker.state import State, GameStage
-from poker.agent import Agent, softmax_with_temperature
+from poker.actions import game_action
+from poker.benchmark import agent_factory, display_name
 from poker.config import TYPICAL_INITIAL_WEALTH, DEFAULT_ACTIONS, describe_action
 from poker.cards import Card
+
+DEFAULT_MODEL = "models/2026-10-03_td_pool/final.pt"
+
+
+def describe_policy(seated_agent, state):
+    """Lines showing the AI's action probabilities (and Q-values) for --full-info; none for scripted bots."""
+    agent = seated_agent.agent
+    agent.player_index = seated_agent.player_index
+    min_bet = state.minimum_legal_bet()
+    lines = []
+
+    if hasattr(agent, "head_values"):
+        # Note: poker.dqn.DQNAgent, with Q-values in big blinds and Q(fold) known exactly
+        q_values = agent.head_values(state)
+        probabilities = agent.head_probabilities(state)
+        for head, q in enumerate(q_values):
+            if np.isfinite(q):
+                action = game_action(head, min_bet)
+                lines.append(f"    {describe_action(action, min_bet)}: {100 * probabilities[head]:.1f}% (Q={q:+.2f} BB)")
+
+    elif hasattr(agent, "get_private_state"):
+        # Note: the old poker.agent.Agent (Q-values in chips, softmax policy). Imported here so that
+        #  playing the new agents doesn't load TensorFlow
+        from poker.agent import softmax_with_temperature
+
+        private_state = agent.get_private_state(state)
+        q_values = agent.q_values(agent.get_model_input(private_state, agent.actions))
+        q_values[~agent.legal_action_mask(state)] = -np.inf
+        action_probs = softmax_with_temperature(q_values, agent.temperature)
+        for index, act in enumerate(agent.actions):
+            if action_probs[index] > 0:
+                lines.append(f"    action={int(act)} ({describe_action(act, min_bet)}): "
+                             f"{100 * action_probs[index]:.1f}% (Q={q_values[index]:.2f})")
+    return lines
 
 
 def display_showdown(state, human_player_index, full_info=False):
@@ -220,15 +259,17 @@ def get_human_action(state):
             sys.exit(0)
 
 
-def play_interactive_game(model_path="models/player_0_latest.weights.h5", full_info=False, initial_wealth=TYPICAL_INITIAL_WEALTH, max_deals=50):
+def play_interactive_game(model_path=DEFAULT_MODEL, full_info=False, initial_wealth=TYPICAL_INITIAL_WEALTH, max_deals=50,
+                          temperature=None):
     """
     Play an interactive game against AI agents.
 
     Args:
-        model_path: Path to the trained model file
-        full_info: If True, show opponents' hole cards
+        model_path: Agent spec for both AI seats (a .pt or .h5 model path, or a scripted agent name)
+        full_info: If True, show opponents' hole cards and the AI's policy
         initial_wealth: Starting wealth for each player
         max_deals: Maximum number of deals before game ends
+        temperature: Softmax temperature for model agents (None: greedy for .pt models, 1.0 for old models)
 
     Returns:
         int: Winning player index
@@ -246,25 +287,10 @@ def play_interactive_game(model_path="models/player_0_latest.weights.h5", full_i
     print(f"Actions: -1=Fold, 0=Check/Call, positive numbers=Bet/Raise")
     print("="*70)
 
-    # Create AI agents
-    print(f"\nLoading AI agents from {model_path}...")
-
-    ai_agents = []
-    for i in range(1, n_players):
-        agent = Agent(
-            player_index=i,
-            n_players=n_players,
-            learning_rate=0.0003,  # Doesn't matter for frozen play
-            hidden_layers=(128, 128),  # Must match training config
-            temperature=1.0
-        )
-
-        # Load the trained model
-        if not agent.load_model(model_path):
-            print(f"Warning: Could not load model from {model_path}")
-            print(f"AI agents will use random initialization (they won't play well!)")
-
-        ai_agents.append(agent)
+    # Create AI agents (one shared model, seated at 1 and 2)
+    print(f"\nLoading AI agents: {display_name(model_path)}...")
+    make_ai = agent_factory(model_path, temperature=temperature)
+    ai_agents = [make_ai(seat) for seat in range(1, n_players)]
 
     print(f"AI agents loaded successfully!\n")
 
@@ -301,27 +327,13 @@ def play_interactive_game(model_path="models/player_0_latest.weights.h5", full_i
 
             # In full-info mode, show AI's action probabilities for debugging
             if full_info:
-                # Compute Q-values and probabilities (same logic as agent.get_action)
-                private_state = agent.get_private_state(state)
-                model_input = agent.get_model_input(private_state, agent.actions)
-                q_values = agent.q_values(model_input)
-
-                # Apply legality constraints
-                min_bet = state.minimum_legal_bet()
-                q_values[~agent.legal_action_mask(state)] = -np.inf
-
-                # Compute softmax probabilities
-                action_probs = softmax_with_temperature(q_values, agent.temperature)
-
-                # Show probabilities for legal actions
-                print(f"\n  [AI {current_player} Policy]")
-                for index, act in enumerate(agent.actions):
-                    if action_probs[index] > 0:  # Only show legal actions
-                        act_desc = describe_action(act, min_bet)
-                        print(f"    action={int(act)} ({act_desc}): {100*action_probs[index]:.1f}% (Q={q_values[index]:.2f})")
+                policy_lines = describe_policy(agent, state)
+                if policy_lines:
+                    print(f"\n  [AI {current_player} Policy]")
+                    print("\n".join(policy_lines))
 
             # Get action from AI (no exploration, frozen policy)
-            action = agent.get_action(state, proba_random_action=0.0)
+            action = agent.get_action(state)
 
             # Show compact AI action (before state update so we can see what they added)
             old_bet = state.total_bet_by_player(current_player)
@@ -388,8 +400,15 @@ Examples:
     parser.add_argument(
         "--model",
         type=str,
-        default="models/player_0_latest.weights.h5",
-        help="Path to trained model file (default: models/player_0_latest.weights.h5)"
+        default=DEFAULT_MODEL,
+        help=f"Agent for both AI seats: a .pt or .h5 model path, or a scripted agent name (default: {DEFAULT_MODEL})"
+    )
+
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Softmax temperature for model agents, in Q units (default: greedy for .pt models, 1.0 for old models)"
     )
 
     parser.add_argument(
@@ -413,7 +432,8 @@ Examples:
             model_path=args.model,
             full_info=args.full_info,
             initial_wealth=args.wealth,
-            max_deals=args.max_deals
+            max_deals=args.max_deals,
+            temperature=args.temperature,
         )
     except KeyboardInterrupt:
         print("\n\nGame interrupted by user. Goodbye!")

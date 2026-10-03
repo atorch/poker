@@ -9,6 +9,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "seaborn",
+    "torch>=2.5",
 ]
 
 [project.optional-dependencies]
@@ -23,5 +24,19 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["poker"]
 
+[tool.setuptools.package-data]
+poker = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Note: lets tests import the scripts at the repo root (e.g. interactive_play.py)
+pythonpath = ["."]
+
+# CPU-only PyTorch wheels (the default Linux wheels pull in about 2.5 GB of CUDA libraries)
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

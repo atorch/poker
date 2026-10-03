@@ -456,3 +456,89 @@ def test_best_hand_strength_matches_reference_on_seven_cards():
 
         assert (ours[0] > ours[1]) == (reference[0] > reference[1])
         assert (ours[0] == ours[1]) == (reference[0] == reference[1])
+
+
+def all_five_card_hand_classes():
+    """
+    One five-card hand for every distinct rank multiset (suits chosen so it isn't a flush),
+    plus a flush for every set of five distinct ranks: every equivalence class of five-card hands.
+    """
+    from itertools import combinations_with_replacement
+
+    hands = []
+    for ranks in combinations_with_replacement(list(Rank), 5):
+        if max(Counter(ranks).values()) == 5:
+            continue
+        # Note: copies of a rank are adjacent, so cycling suits gives them distinct suits (and no flush)
+        hands.append([Card(rank, Suit(i % 4)) for i, rank in enumerate(ranks)])
+    for ranks in combinations(list(Rank), 5):
+        hands.append([Card(rank, Suit.HEARTS) for rank in ranks])
+    return hands
+
+
+def dense_ranks(values):
+    order = {value: i for i, value in enumerate(sorted(set(values)))}
+    return [order[value] for value in values]
+
+
+def test_every_five_card_hand_class_matches_reference_evaluator():
+    """Exhaustive: the same ordering as the reference on all classes, and exactly 7462 distinct values."""
+    hands = all_five_card_hand_classes()
+    ours = [strength(hand)[0] for hand in hands]
+    reference = [reference_strength(hand) for hand in hands]
+    assert len(set(ours)) == len(set(reference)) == 7462
+    assert dense_ranks(ours) == dense_ranks(reference)
+
+
+@pytest.mark.parametrize("hand, description", [
+    ("As Ad 2c 3h 4s", "a pair of ACEs"),
+    ("As Ad Ac 2h 3s", "three ACEs"),
+    ("As 2d 3c 4h 5s", "a straight ending in a FIVE"),
+])
+def test_ace_only_plays_low_in_the_wheel(hand, description):
+    """Regression: A A 2 3 4 and A A A 2 3 used to be scored as ace-high straights."""
+    assert strength(cards(hand))[1].startswith(description)
+
+
+def test_pair_of_aces_with_two_three_four_is_not_a_straight_in_seven_cards():
+    board = cards("Kd Ah 4d Ad Jh")
+    pair_of_aces = best_hand_strength(board, cards("3h 2s"))
+    two_pair = best_hand_strength(board, cards("Jd 2h"))
+    assert pair_of_aces[1].startswith("a pair of ACEs")
+    assert two_pair[0] > pair_of_aces[0]
+
+
+def test_direct_evaluator_matches_combinations_on_random_hands():
+    from poker.hands import best_hand_strength_by_combinations
+
+    rng = Random(2)
+    for n_cards in [5, 6, 7]:
+        for _ in range(2000):
+            dealt = rng.sample(FULL_DECK, n_cards)
+            assert best_hand_strength(dealt[2:], dealt[:2]) == best_hand_strength_by_combinations(dealt[2:], dealt[:2])
+
+
+def test_direct_evaluator_matches_on_every_five_card_class():
+    for hand in all_five_card_hand_classes():
+        assert best_hand_strength(hand, []) == strength(hand)
+
+
+@pytest.mark.parametrize("seven_cards", [
+    "Ah Ad Ac Kh Kd Ks 2c",     # two sets of trips: aces full of kings
+    "Ah Ad Ac As Kh Kd Ks",     # quads and trips: kings are the kicker
+    "Ah Ad Ac Kh Kd Qs Qc",     # trips and two pairs
+    "Ah Ad Kh Kd Qs Qc 2c",     # three pairs: the third pair's rank is the kicker
+    "9h Th Jh Qh Kh 2h Ah",     # six suited cards including a royal flush
+    "Ah 2h 3h 4h 5h 6c Kd",     # steel wheel
+    "Ah 2h 3h 4h 5h 6h Kd",     # six-high straight flush beats the steel wheel
+    "Ah 2c 3d 4s 5h 6c Kd",     # wheel and six-high straight
+    "2h 5h 9h Jh Kh 3c 4d",     # flush and no straight flush
+    "6h 7h 8h 9h Jh Ts 2c",     # flush beats the straight in the same cards
+    "Kh Kd Kc 7h 9h 2h 4h",     # trips with a flush: the flush wins
+    "Kh Kd Kc 7h 7d 2h 4h",     # full house beats the four-card flush draw
+])
+def test_direct_evaluator_on_rare_seven_card_shapes(seven_cards):
+    from poker.hands import best_hand_strength_by_combinations
+
+    dealt = cards(seven_cards)
+    assert best_hand_strength(dealt[2:], dealt[:2]) == best_hand_strength_by_combinations(dealt[2:], dealt[:2])

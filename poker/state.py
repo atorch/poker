@@ -37,7 +37,12 @@ class State:
         #  as in limit hold'em. Without a cap, betting escalates until someone is all in.
         #  Forced blinds do not count toward the cap.
         self.max_raises_per_stage = max_raises_per_stage
-        self.wealth = [initial_wealth for player in range(self.n_players)]
+        # Note: initial_wealth is either one stack size for everyone or a list with one per player
+        if np.ndim(initial_wealth) == 0:
+            self.wealth = [initial_wealth for player in range(self.n_players)]
+        else:
+            assert len(initial_wealth) == self.n_players, "need one initial stack per player"
+            self.wealth = list(initial_wealth)
         self.verbose = verbose
 
         if self.verbose:
@@ -99,8 +104,10 @@ class State:
             stage: [[] for player in range(self.n_players)] for stage in GameStage
         }
 
-        # Note: number of voluntary bets/raises made so far in each stage (see max_raises_per_stage)
+        # Note: number of voluntary bets/raises made so far in each stage (see max_raises_per_stage),
+        #  in total and by player
         self.raises_by_stage = {stage: 0 for stage in GameStage}
+        self.raises_by_stage_and_player = {stage: [0] * self.n_players for stage in GameStage}
 
         # Note: the first player to act is forced to bet the small blind,
         #  and the second player to act is forced to bet the big blind,
@@ -274,6 +281,7 @@ class State:
 
             if not forced and action > self.minimum_legal_bet():
                 self.raises_by_stage[self.game_stage] += 1
+                self.raises_by_stage_and_player[self.game_stage][self.current_player] += 1
 
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
 

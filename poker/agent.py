@@ -668,11 +668,8 @@ class Agent:
         y = np.asarray(target_q_values, dtype=np.float32).reshape(-1, 1)
         self.model.train_on_batch(model_input.astype(np.float32), y)
 
-    def get_action(self, game_state, proba_random_action=0.8):
-
-        if np.random.uniform() < proba_random_action:
-
-            return self.random_legal_action(game_state)
+    def policy(self, game_state):
+        """Softmax action probabilities aligned with self.actions (0 for illegal actions)."""
 
         private_state = self.get_private_state(game_state)
 
@@ -687,6 +684,20 @@ class Agent:
 
         # Use softmax policy to sample actions probabilistically
         # This enables mixed strategies, which are essential for poker Nash equilibria
-        action_probs = softmax_with_temperature(q_at_private_state, self.temperature)
+        return softmax_with_temperature(q_at_private_state, self.temperature)
+
+    def action_probabilities(self, game_state):
+        """{action: probability} over the legal actions (used by poker.diagnostics)."""
+
+        action_probs = self.policy(game_state)
+        return {int(action): float(p) for action, p in zip(self.actions, action_probs) if p > 0}
+
+    def get_action(self, game_state, proba_random_action=0.8):
+
+        if np.random.uniform() < proba_random_action:
+
+            return self.random_legal_action(game_state)
+
+        action_probs = self.policy(game_state)
         action_index = np.random.choice(len(self.actions), p=action_probs)
         return self.actions[action_index]
