@@ -1,4 +1,5 @@
 from collections import Counter
+from enum import IntEnum
 from itertools import combinations
 from operator import attrgetter
 
@@ -30,66 +31,111 @@ def is_straight(sorted_hand):
     return True, straight_tiebreaker
 
 
+class HandCategory(IntEnum):
+
+    HIGH_CARD = 0
+    PAIR = 1
+    TWO_PAIR = 2
+    THREE_OF_A_KIND = 3
+    STRAIGHT = 4
+    FLUSH = 5
+    FULL_HOUSE = 6
+    FOUR_OF_A_KIND = 7
+    STRAIGHT_FLUSH = 8
+
+
+def encode_strength(category, tiebreak_ranks):
+    """
+    Pack a hand category and its ordered tiebreak ranks into a single int.
+
+    The encoding is lexicographic: category first, then each tiebreak rank in order
+    (base 13, five slots), so comparing ints is the same as comparing
+    (category, tiebreak_ranks) tuples. Two hands tie only if they are equal in poker.
+    """
+    padded = list(tiebreak_ranks) + [0] * (5 - len(tiebreak_ranks))
+    value = int(category)
+    for rank in padded:
+        value = value * len(Rank) + int(rank)
+    return value
+
+
 def best_hand_strength(public_cards, hole_cards):
 
     available_cards = public_cards + hole_cards
 
     return max(
-        strength(candidate_hand) for candidate_hand in combinations(available_cards, 5)
+        (strength(candidate_hand) for candidate_hand in combinations(available_cards, 5)),
+        key=lambda strength_and_description: strength_and_description[0],
     )
 
 
 def strength(hand):
+    """
+    Return (strength, description) for a five-card hand.
+
+    Higher strength wins; equal strength is a genuine tie (split pot).
+    Tiebreaks follow standard poker rules, including kickers.
+    """
 
     unique_suits = set(card.suit for card in hand)
 
     sorted_hand = sort_hand(hand)
     straight, straight_tiebreaker = is_straight(sorted_hand)
+    is_flush = len(unique_suits) == 1
 
-    # Note: the hand is a flush (either a straight flush or a regular flush)
-    if len(unique_suits) == 1:
+    # Note: ranks ordered by (count, rank) descending, e.g. two pair J J 7 7 A -> [J, 7, A]
+    rank_counter = Counter(card.rank for card in hand)
+    groups = sorted(rank_counter.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    ranks_by_group = [rank for rank, _ in groups]
+    counts = [count for _, count in groups]
+    high_to_low = sorted((card.rank for card in hand), reverse=True)
 
-        if straight:
-            # Straight flush (ties broken by the rank of the last card in the straight)
-            return 1000 + straight_tiebreaker, "a straight flush"
+    if straight and is_flush:
+        return encode_strength(HandCategory.STRAIGHT_FLUSH, [straight_tiebreaker]), "a straight flush"
 
-        # Regular flush (ties broken by the rank of the high card)
-        description = f"a {hand[0].suit.name} flush"
-        return 500 + sorted_hand[-1].rank, description
+    if counts == [4, 1]:
+        quads, kicker = ranks_by_group
+        return (
+            encode_strength(HandCategory.FOUR_OF_A_KIND, ranks_by_group),
+            f"four {quads.name}s, {kicker.name} kicker",
+        )
 
-    rank_counter = Counter([card.rank for card in hand])
-    most_common_ranks = rank_counter.most_common()
+    if counts == [3, 2]:
+        trips, pair = ranks_by_group
+        return (
+            encode_strength(HandCategory.FULL_HOUSE, ranks_by_group),
+            f"a full house ({trips.name}s full of {pair.name}s)",
+        )
 
-    first_most_common_rank = most_common_ranks[0][0]
-    second_most_common_rank = most_common_ranks[1][0]
-    first_most_common_count = most_common_ranks[0][1]
-    second_most_common_count = most_common_ranks[1][1]
-
-    if first_most_common_count == 4:
-        description = f"four {first_most_common_rank.name}"
-        return 700 + first_most_common_rank, description
-
-    if first_most_common_count == 3 and second_most_common_count == 2:
-        description = f"a full house ({first_most_common_rank.name} full of {second_most_common_rank.name})"
-        return 600 + first_most_common_rank, description
+    if is_flush:
+        return (
+            encode_strength(HandCategory.FLUSH, high_to_low),
+            f"a {hand[0].suit.name} flush, {high_to_low[0].name} high",
+        )
 
     if straight:
-        description = f"a straight ending in a {straight_tiebreaker.name}"
-        return 400 + straight_tiebreaker, description
+        return (
+            encode_strength(HandCategory.STRAIGHT, [straight_tiebreaker]),
+            f"a straight ending in a {straight_tiebreaker.name}",
+        )
 
-    if first_most_common_count == 3:
-        description = f"three of a kind ({first_most_common_rank.name})"
-        return 300 + first_most_common_rank, description
+    if counts == [3, 1, 1]:
+        return (
+            encode_strength(HandCategory.THREE_OF_A_KIND, ranks_by_group),
+            f"three {ranks_by_group[0].name}s, {ranks_by_group[1].name} kicker",
+        )
 
-    if first_most_common_count == 2 and second_most_common_count == 2:
-        # Note: ties broken by higher pair, then lower pair
-        higher_pair = max(first_most_common_rank, second_most_common_rank)
-        description = f"two pair with {higher_pair.name}s high"
-        return 200 + higher_pair, description
+    if counts == [2, 2, 1]:
+        higher_pair, lower_pair, kicker = ranks_by_group
+        return (
+            encode_strength(HandCategory.TWO_PAIR, ranks_by_group),
+            f"two pair, {higher_pair.name}s and {lower_pair.name}s, {kicker.name} kicker",
+        )
 
-    if first_most_common_count == 2:
-        description = f"a pair of {first_most_common_rank.name}"
-        return 100 + first_most_common_rank, description
+    if counts == [2, 1, 1, 1]:
+        return (
+            encode_strength(HandCategory.PAIR, ranks_by_group),
+            f"a pair of {ranks_by_group[0].name}s, {ranks_by_group[1].name} kicker",
+        )
 
-    description = f"{sorted_hand[-1].rank.name} high"
-    return int(sorted_hand[-1].rank), description
+    return encode_strength(HandCategory.HIGH_CARD, high_to_low), f"{high_to_low[0].name} high"

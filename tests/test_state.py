@@ -80,35 +80,27 @@ def test_state_with_low_wealth():
     )
 
     assert state.game_stage == GameStage.PRE_FLOP
+    assert state.dealer == 1
+    n_deals_before = state.n_deals
 
     state.update(small_blind)
     state.update(small_blind)
+
+    # Note: the low wealth players are all in, so bets > 0 are not allowed,
+    #  and folding is not allowed either because nobody faces a bet: checking is the only option
+    assert state.maximum_legal_bet() == 0
+    assert state.legal_actions() == [0]
 
     # Both BB and SB must act voluntarily before stage transitions
     state.update(0)  # BB checks
     state.update(0)  # SB checks
 
-    assert state.game_stage == GameStage.FLOP
-
-    assert state.dealer == 1
-    assert state.current_player == 2
-
-    # Note: the low wealth players are all in, so bets > 0 are not allowed
-    assert state.maximum_legal_bet() == 0
-
-    for _ in range(state.n_players):
-        state.update(0)
-
-    assert state.game_stage == GameStage.TURN
-
-    state.update(0)
-
-    for _ in range(state.n_players - 1):
-        state.update(-1)
-
-    # Note: player 2 wins because everyone else has folded
-    assert state.wealth[2] == 1 + small_blind * (state.n_players - 1)
-    assert state.wealth[3] == 0
+    # Note: nobody can bet any more, so the remaining public cards are dealt immediately
+    #  and the deal goes straight to a showdown (no checking through the flop, turn and river)
+    assert state.n_deals == n_deals_before + 1 or state.terminal
+    assert not state.last_deal_won_by_fold
+    assert len(state.last_deal_public_cards) == 5
+    assert sum(state.wealth) == initial_wealth * state.n_players
 
 
 def test_minimum_legal_bet():
@@ -179,18 +171,23 @@ def test_ties():
 
     assert state.game_stage == GameStage.RIVER
 
-    amount_bet_by_player_who_folds = (
-        sum(state.bets_by_stage[0][state.current_player])
-        + sum(state.bets_by_stage[1][state.current_player])
-        + sum(state.bets_by_stage[2][state.current_player])
-    )
+    # Note: player 1 checks, player 2 bets, player 0 calls, and player 1 folds to the bet
+    #  (folding is only legal when facing a bet)
+    assert state.current_player == 1
+    state.update(action_knock)
+    state.update(action_bet)
+    state.update(action_bet)
 
+    amount_bet_by_player_who_folds = state.total_bet_by_player(state.current_player)
+
+    n_deals_before_fold = state.n_deals
     state.update(action_fold)
-    assert state.has_folded[1]
 
-    # Note: the other two players stay in the game. They tie and split the pot
-    state.update(action_bet)
-    state.update(action_bet)
+    # Note: the fold ends the river (players 0 and 2 have matched bets), so the deal goes to
+    #  a showdown right away. The other two players tie and split the pot
+    assert state.n_deals == n_deals_before_fold + 1
+    assert state.last_deal_folded_players == [1]
+    assert state.last_deal_winners == [0, 2]
 
     amount_won_by_each_winner = amount_bet_by_player_who_folds / (state.n_players - 1)
     assert state.wealth[0] == initial_wealth + amount_won_by_each_winner

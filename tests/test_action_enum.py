@@ -142,8 +142,8 @@ def test_describe_action_with_enum():
     assert describe_action(Action.BET_2, min_bet=0) == "Bet $2"
 
     # Raise (when min_bet>0 and action > min_bet)
-    assert describe_action(Action.BET_3, min_bet=1) == "Raise to $3"
-    assert describe_action(Action.BET_2, min_bet=1) == "Raise to $2"
+    assert describe_action(Action.BET_3, min_bet=1) == "Raise by $2 (put in $3)"
+    assert describe_action(Action.BET_2, min_bet=1) == "Raise by $1 (put in $2)"
 
 
 def test_describe_action_with_int():
@@ -153,7 +153,7 @@ def test_describe_action_with_int():
     assert describe_action(0, min_bet=0) == "Check"
     assert describe_action(0, min_bet=2) == "Call $2"
     assert describe_action(2, min_bet=0) == "Bet $2"
-    assert describe_action(3, min_bet=1) == "Raise to $3"
+    assert describe_action(3, min_bet=1) == "Raise by $2 (put in $3)"
 
 
 def test_agent_uses_default_actions():

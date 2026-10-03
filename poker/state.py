@@ -4,6 +4,7 @@ from random import sample
 import numpy as np
 
 from poker.cards import Suit, Rank, Card, FULL_DECK
+from poker.config import DEFAULT_ACTIONS, MAX_RAISES_PER_STAGE
 from poker.hands import best_hand_strength, sort_hand
 from poker.utils import argmax
 
@@ -26,11 +27,16 @@ class State:
         initial_dealer=0,
         verbose=False,
         deck=None,
+        max_raises_per_stage=MAX_RAISES_PER_STAGE,
     ):
 
         self.n_players = n_players
         self.big_blind = big_blind
         self.small_blind = small_blind
+        # Note: caps the number of voluntary raises (including the opening bet) per stage,
+        #  as in limit hold'em. Without a cap, betting escalates until someone is all in.
+        #  Forced blinds do not count toward the cap.
+        self.max_raises_per_stage = max_raises_per_stage
         self.wealth = [initial_wealth for player in range(self.n_players)]
         self.verbose = verbose
 
@@ -55,6 +61,7 @@ class State:
         self.last_deal_hand_strengths = None
         self.last_deal_hand_descriptions = None
         self.last_deal_folded_players = []
+        self.last_deal_bets_by_player = []
 
         self.initialize_pre_flop(dealer=initial_dealer, deck=deck)
 
@@ -92,6 +99,9 @@ class State:
             stage: [[] for player in range(self.n_players)] for stage in GameStage
         }
 
+        # Note: number of voluntary bets/raises made so far in each stage (see max_raises_per_stage)
+        self.raises_by_stage = {stage: 0 for stage in GameStage}
+
         # Note: the first player to act is forced to bet the small blind,
         #  and the second player to act is forced to bet the big blind,
         #  as long as the blinds are not larger than anyone's wealth
@@ -101,10 +111,10 @@ class State:
         min_wealth = min(self.wealth)
 
         small_blind = min(self.small_blind, min_wealth)
-        self.update(small_blind)
+        self.update(small_blind, forced=True)
 
         big_blind = min(self.big_blind, min_wealth)
-        self.update(big_blind)
+        self.update(big_blind, forced=True)
 
     def get_next_player(self, current_player):
 
@@ -171,13 +181,52 @@ class State:
 
         return total_bet_previous_player - total_bet_current_player
 
-    def stage_is_complete(self, next_player):
+    def remaining_betting_room(self):
+        """
+        Chips each active player can still add this deal before the shortest active stack is all in.
 
-        if len(self.bets_by_stage[self.game_stage][self.current_player]) == 0:
+        At the end of a stage all active players have bet the same total, so when this is
+        zero no further betting is possible and the remaining cards can be dealt immediately.
+        """
+        return min(
+            self.wealth[player] - self.total_bet_by_player(player)
+            for player in range(self.n_players)
+            if not self.has_folded[player]
+        )
+
+    def raise_cap_reached(self):
+
+        return self.raises_by_stage[self.game_stage] >= self.max_raises_per_stage
+
+    def is_legal(self, action):
+        """
+        Whether the current player may take `action` (negative = fold, otherwise chips to add).
+
+        Rules:
+        - Folding is only allowed when facing a bet (folding when you can check for free is
+          never better than checking, and folding when all in just forfeits the pot)
+        - Calling/betting must be between the minimum and maximum legal bet
+        - Bets above the call amount (raises) are not allowed once the raise cap is reached
+        """
+        minimum_legal_bet = self.minimum_legal_bet()
+
+        if action < 0:
+            return minimum_legal_bet > 0
+
+        if action > minimum_legal_bet and self.raise_cap_reached():
             return False
 
-        if len(self.bets_by_stage[self.game_stage][next_player]) == 0:
-            return False
+        return minimum_legal_bet <= action <= self.maximum_legal_bet()
+
+    def legal_actions(self, actions=DEFAULT_ACTIONS):
+        """The subset of `actions` the current player may take (never empty for DEFAULT_ACTIONS)."""
+
+        return [action for action in actions if self.is_legal(action)]
+
+    def stage_is_complete(self):
+
+        active_players = [player for player in range(self.n_players) if not self.has_folded[player]]
+        stage_bets = self.bets_by_stage[self.game_stage]
 
         # For pre-flop, ensure players who posted forced blinds have acted voluntarily
         # (more than just the forced blind action)
@@ -186,39 +235,32 @@ class State:
             sb_player = (self.dealer + 1) % self.n_players
             # Big blind is player left of small blind
             bb_player = (self.dealer + 2) % self.n_players
-
-            # SB and BB must have at least 2 actions (forced blind + voluntary decision)
-            if not self.has_folded[sb_player]:
-                if len(self.bets_by_stage[self.game_stage][sb_player]) < 2:
-                    return False
-
-            if not self.has_folded[bb_player]:
-                if len(self.bets_by_stage[self.game_stage][bb_player]) < 2:
-                    return False
-
-            # All other players must have at least 1 action
-            for player in range(self.n_players):
-                if player not in [sb_player, bb_player] and not self.has_folded[player]:
-                    if len(self.bets_by_stage[self.game_stage][player]) < 1:
-                        return False
+            blind_players = [sb_player, bb_player]
         else:
-            # Post-flop: all players just need at least 1 action
-            for player in range(self.n_players):
-                if not self.has_folded[player]:
-                    if len(self.bets_by_stage[self.game_stage][player]) < 1:
-                        return False
+            blind_players = []
 
-        # Note: these are totals for the current stage only (e.g. player 1 has bet a total of $40 during the turn)
-        total_bet_current_player = sum(
-            self.bets_by_stage[self.game_stage][self.current_player]
-        )
-        total_bet_next_player = sum(self.bets_by_stage[self.game_stage][next_player])
+        # Every active player must have acted voluntarily at least once in this stage
+        # (SB and BB need 2 actions pre-flop: forced blind + voluntary decision)
+        for player in active_players:
+            n_required_actions = 2 if player in blind_players else 1
+            if len(stage_bets[player]) < n_required_actions:
+                return False
 
-        # TODO Could this lead to an infinite loop / never-ending stage if a player does not have enough wealth to complete the bet?
-        # TODO Pytest edge cases where one player has low (but positive) wealth
-        return total_bet_current_player == total_bet_next_player
+        # Note: the stage is complete when every active player has bet the same total in this stage.
+        #  We compare all active players (not just the current and next player) so that the stage
+        #  also ends when the last player to act folds rather than calls
+        return len({sum(stage_bets[player]) for player in active_players}) == 1
 
-    def update_has_folded_or_bets(self, action):
+    def update_has_folded_or_bets(self, action, forced=False):
+
+        # Note: forced blinds skip the legality checks and do not count as raises
+        if not forced:
+            # Note: blow up if the player tries to take an illegal action
+            assert self.is_legal(action), (
+                f"Illegal action {action} for player {self.current_player}: "
+                f"min bet {self.minimum_legal_bet()}, max bet {self.maximum_legal_bet()}, "
+                f"raise cap reached {self.raise_cap_reached()}"
+            )
 
         # Note: negative bets indicate that the player is folding
         if action < 0:
@@ -230,11 +272,8 @@ class State:
 
         else:
 
-            minimum_legal_bet = self.minimum_legal_bet()
-            maximum_legal_bet = self.maximum_legal_bet()
-
-            # Note: blow up if the player tries to take an illegal action
-            assert minimum_legal_bet <= action <= maximum_legal_bet
+            if not forced and action > self.minimum_legal_bet():
+                self.raises_by_stage[self.game_stage] += 1
 
             self.bets_by_stage[self.game_stage][self.current_player].append(action)
 
@@ -252,27 +291,30 @@ class State:
         self.last_deal_hand_strengths = list(hand_strengths) if hand_strengths else None
         self.last_deal_hand_descriptions = list(hand_descriptions) if hand_descriptions else None
         self.last_deal_folded_players = [i for i in range(self.n_players) if self.has_folded[i]]
+        self.last_deal_bets_by_player = [self.total_bet_by_player(i) for i in range(self.n_players)]
 
         losing_players = set(range(self.n_players)).difference(winning_players)
 
+        total_lost = 0
         for losing_player in losing_players:
 
-            for stage in GameStage:
+            total_bet_by_losing_player = self.total_bet_by_player(losing_player)
+            self.wealth[losing_player] -= total_bet_by_losing_player
+            total_lost += total_bet_by_losing_player
 
-                total_bet_by_losing_player = sum(
-                    self.bets_by_stage[stage][losing_player]
-                )
-                self.wealth[losing_player] -= total_bet_by_losing_player
+            if self.wealth[losing_player] <= 0:
+                # Note: for simplicity, the game ends as soon as any player runs out of money
+                self.terminal = True
 
-                if self.wealth[losing_player] <= 0:
-                    # Note: for simplicity, the game ends as soon as any player runs out of money
-                    self.terminal = True
-
-                for winning_player in winning_players:
-                    # Note: if there are multiple winning players, they split the pot
-                    self.wealth[winning_player] += total_bet_by_losing_player / len(
-                        winning_players
-                    )
+        # Note: if there are multiple winning players, they split the pot in whole chips.
+        #  Any odd chips go one at a time to the winners closest to the dealer's left
+        #  (the standard rule), which keeps every stack a whole number of chips.
+        winners_in_seat_order = sorted(
+            winning_players, key=lambda player: (player - self.dealer - 1) % self.n_players
+        )
+        share, odd_chips = divmod(total_lost, len(winners_in_seat_order))
+        for seat_index, winning_player in enumerate(winners_in_seat_order):
+            self.wealth[winning_player] += share + (1 if seat_index < odd_chips else 0)
 
         if self.verbose:
             print(f"Player wealths are now {self.wealth}")
@@ -321,20 +363,55 @@ class State:
         if self.verbose:
             print(f"Public cards are {self.public_cards}")
 
-    def update(self, action):
+    def showdown(self):
+
+        # Note: we've reached the river and the stage is complete (or nobody can bet any more),
+        #  so we need to figure out who has the strongest hand
+        hand_strengths, hand_descriptions = self.calculate_best_hand_strengths()
+
+        # Note: ties (multiple players with equally strong hands) split the pot
+        winning_players = argmax(hand_strengths)
+
+        if self.verbose:
+            print(f"Hands: {hand_descriptions}")
+            winning_hand_description = hand_descriptions[winning_players[0]]
+            print(
+                f"Player(s) {winning_players} win the hand with {winning_hand_description} (hand strength {max(hand_strengths)})"
+            )
+            print(f"Public cards: {self.public_cards}")
+            print(f"Hole cards: {self.hole_cards}")
+
+        self.redistribute_wealth_and_reinitialize(
+            winning_players,
+            won_by_fold=False,
+            hand_strengths=hand_strengths,
+            hand_descriptions=hand_descriptions
+        )
+
+    def update(self, action, forced=False):
 
         if self.verbose:
             print(self)
 
-        self.update_has_folded_or_bets(action)
+        self.update_has_folded_or_bets(action, forced=forced)
 
         over_due_to_folding = sum(self.has_folded) >= self.n_players - 1
 
         next_player = self.get_next_player(self.current_player)
 
-        if not over_due_to_folding and self.stage_is_complete(next_player):
+        if not over_due_to_folding and self.stage_is_complete():
 
-            if self.game_stage <= GameStage.TURN:
+            if self.game_stage <= GameStage.TURN and self.remaining_betting_room() <= 0:
+
+                # Note: the shortest active stack is all in, so nobody can bet any more:
+                #  deal the remaining public cards and go straight to the showdown
+                #  (rather than asking players to check through each remaining stage)
+                while self.game_stage < GameStage.RIVER:
+                    self.move_to_next_stage()
+
+                self.showdown()
+
+            elif self.game_stage <= GameStage.TURN:
 
                 self.move_to_next_stage()
 
@@ -343,29 +420,7 @@ class State:
 
             else:
 
-                # Note: we've reached the river and the stage is complete,
-                #  so we need to figure out who has the strongest hand
-                hand_strengths, hand_descriptions = self.calculate_best_hand_strengths()
-
-                # TODO This is incorrect if there are ties (multiple players with the same hand),
-                #  in which case the winners split the pot
-                winning_players = argmax(hand_strengths)
-
-                if self.verbose:
-                    print(f"Hands: {hand_descriptions}")
-                    winning_hand_description = hand_descriptions[winning_players[0]]
-                    print(
-                        f"Player(s) {winning_players} win the hand with {winning_hand_description} (hand strength {max(hand_strengths)})"
-                    )
-                    print(f"Public cards: {self.public_cards}")
-                    print(f"Hole cards: {self.hole_cards}")
-
-                self.redistribute_wealth_and_reinitialize(
-                    winning_players,
-                    won_by_fold=False,
-                    hand_strengths=hand_strengths,
-                    hand_descriptions=hand_descriptions
-                )
+                self.showdown()
 
         elif over_due_to_folding:
 

@@ -6,7 +6,7 @@ import random
 import tensorflow as tf
 
 from poker.state import State, GameStage
-from poker.agent import Agent, ReplayBuffer
+from poker.agent import Agent, ReplayBuffer, checkpoint_path, softmax_with_temperature
 from poker.random_agent import RandomAgent
 from poker.skillful_random_agent import SkillfulRandomAgent
 from poker.consistent_random_agent import ConsistentRandomAgent
@@ -74,15 +74,10 @@ def get_pocket_aces_bet_probability(agent):
     # Get Q-values for all actions
     private_state = agent.get_private_state(game_state)
     model_input = agent.get_model_input(private_state, agent.actions)
-    q_values = agent.model.predict(model_input, verbose=0)[:, 0]
+    q_values = agent.q_values(model_input)
 
     # Apply legality constraints (same as in agent.get_action)
-    minimum_legal_bet = game_state.minimum_legal_bet()
-    maximum_legal_bet = game_state.maximum_legal_bet()
-
-    for index, action in enumerate(agent.actions):
-        if action >= 0 and ((action < minimum_legal_bet) or (action > maximum_legal_bet)):
-            q_values[index] = -np.inf
+    q_values[~agent.legal_action_mask(game_state)] = -np.inf
 
     # Compute softmax probabilities
     action_probs = softmax_with_temperature(q_values, agent.temperature)
@@ -323,8 +318,8 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             episode_stats['deals_with_premium_checked'].add(current_deal)
 
             # Check if agent has premium hand
-            if hasattr(state, 'private_cards') and learning_player < len(state.private_cards):
-                player_cards = state.private_cards[learning_player]
+            if learning_player < len(state.hole_cards):
+                player_cards = state.hole_cards[learning_player]
                 if is_premium_hand(player_cards):
                     episode_stats['premium_hands_seen'] += 1
                     # Note: We only count as folded if the FIRST action is a fold
@@ -363,7 +358,6 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
         assert state.wealth[learning_player] == initial_wealth + cumulative_reward
 
         next_private_state = players[learning_player].get_private_state(state)
-        next_action = players[learning_player].get_action(state, proba_random_action)
 
         if state.terminal:
 
@@ -379,8 +373,13 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             # (In the future, we might add a small reward for being the last survivor, but for now
             # we keep it simple and let the agent learn wealth value implicitly.)
             updated_guess_for_q = reward
+            next_action = None
+            next_legal_mask = np.zeros(len(players[learning_player].actions), dtype=bool)
 
         else:
+
+            next_action = players[learning_player].get_action(state, proba_random_action)
+            next_legal_mask = players[learning_player].legal_action_mask(state)
 
             continuation_value = players[learning_player].predicted_q(
                 next_private_state, next_action
@@ -396,8 +395,11 @@ def run_one_episode(episode, players, max_deals=50000, min_initial_wealth=MIN_IN
             players[learning_player].update_q(private_state, action, updated_guess_for_q)
         else:
             # Experience replay (batch_size>1): store transition for later batch update
-            # Store (state, action, reward, next_state) for SARSA-style updates
-            replay_buffer.add(private_state, action, reward, next_private_state)
+            # Store the legal actions at next_state and whether it is terminal,
+            #  so that replay targets only bootstrap over legal actions of non-terminal states
+            replay_buffer.add(
+                private_state, action, reward, next_private_state, next_legal_mask, state.terminal
+            )
 
         action = next_action
         private_state = next_private_state
@@ -502,7 +504,7 @@ def test_game_fairness_with_random_agents(n_players=3, n_episodes=1000, max_deal
 def run_sarsa(
     n_players,
     n_episodes=1500,
-    model_path="models/player_0_latest.h5",
+    model_path="models/player_0_latest.weights.h5",
     save_interval=10,
     max_deals=5_000,
     curriculum_random_episodes=200,  # REDUCED from 800 to prevent over-fitting to RandomAgent
@@ -520,6 +522,7 @@ def run_sarsa(
     pretrain_wealth_heuristic=True,  # Enable by default - improves mean performance dramatically
     load_existing_model=False,  # Default: fresh training runs to avoid confounding from previous weights
     gamma=0.9999,  # Discount factor for Bellman equation (stability vs long-term planning trade-off)
+    n_eval_episodes=1000,  # Episodes per opponent type in the final frozen evaluation
 ):
     """
     Train a poker agent using SARSA with curriculum learning.
@@ -834,22 +837,23 @@ def run_sarsa(
         if replay_buffer is not None and len(replay_buffer) >= batch_size:
             for _ in range(updates_per_episode):
                 # Sample mini-batch from replay buffer
-                states, actions, rewards, next_states = replay_buffer.sample(batch_size)
+                states, actions, rewards, next_states, next_legal_masks, dones = replay_buffer.sample(batch_size)
 
-                # Compute SARSA targets for each transition in batch
-                target_q_values = np.zeros(batch_size)
+                # Compute Expected SARSA targets for each transition in batch:
+                #  reward + gamma * E[Q(next_state, a')] with a' drawn from the current softmax policy
+                #  over the actions that are legal in next_state. This matches the policy the agent
+                #  actually follows (unlike max, which overestimates), and terminal transitions
+                #  get no bootstrap term
+                target_q_values = np.array(rewards, dtype=float)
                 for i in range(batch_size):
-                    # Get next action's Q-value (SARSA uses the actual next action taken)
-                    # Note: In replay buffer, we need to recompute next_action using current policy
-                    # For now, use a simplified approach: estimate max Q for next state
+                    if dones[i]:
+                        continue
                     model_input = learning_agent.get_model_input(next_states[i], learning_agent.actions)
-                    next_q_values = learning_agent.model.predict(model_input, verbose=0)[:, 0]
-
-                    # SARSA target: reward + gamma * Q(next_state, next_action)
-                    # Use max for simplicity (this is closer to Q-learning)
-                    # TODO: Store next_action in buffer for true SARSA
-                    max_next_q = np.max(next_q_values)
-                    target_q_values[i] = rewards[i] + gamma * max_next_q
+                    next_q_values = learning_agent.q_values(model_input)
+                    next_q_values[~next_legal_masks[i]] = -np.inf
+                    next_policy = softmax_with_temperature(next_q_values, learning_agent.temperature)
+                    expected_next_q = np.sum(next_policy[next_legal_masks[i]] * next_q_values[next_legal_masks[i]])
+                    target_q_values[i] += gamma * expected_next_q
 
                 # Update Q-function with mini-batch
                 learning_agent.update_q_batch(states, actions, target_q_values)
@@ -872,7 +876,7 @@ def run_sarsa(
             test_state = State(n_players=n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             test_private_state = learning_agent.get_private_state(test_state)
             test_input = learning_agent.get_model_input(test_private_state, learning_agent.actions)
-            test_q_values = learning_agent.model.predict(test_input, verbose=0)[:, 0]
+            test_q_values = learning_agent.q_values(test_input)
             max_q = np.max(np.abs(test_q_values))
 
             # Warning: if max |Q| > 10k, model is likely over-fitting
@@ -887,10 +891,7 @@ def run_sarsa(
 
             # Save episode-numbered checkpoint in same directory as model_path
             # This allows grid_search to load and evaluate each checkpoint
-            model_dir = os.path.dirname(model_path)
-            model_name = os.path.splitext(os.path.basename(model_path))[0]
-            checkpoint_path = os.path.join(model_dir, f"{model_name}_ep{episode}.h5")
-            learning_agent.save_model(checkpoint_path)
+            learning_agent.save_model(checkpoint_path(model_path, episode))
 
         # MID-TRAINING VALIDATION: Every 100 episodes, test frozen agent vs RandomAgent
         # This helps us track when/how the policy degrades over time
@@ -959,7 +960,9 @@ def run_sarsa(
 
     # Save final timestamped checkpoint
     timestamp = datetime.now().strftime("%Y-%m-%d")
-    final_checkpoint_path = f"models/player_0_{timestamp}_ep{n_episodes}_final.h5"
+    final_checkpoint_path = os.path.join(
+        os.path.dirname(model_path), f"player_0_{timestamp}_ep{n_episodes}_final.weights.h5"
+    )
     learning_agent.save_model(final_checkpoint_path)
 
     # Print final statistics
@@ -1067,7 +1070,7 @@ def run_sarsa(
         for i in range(1, n_players)
     ]
     results = evaluate_frozen_agent(
-        learning_agent, random_opponents, n_episodes=1000, max_deals=max_deals
+        learning_agent, random_opponents, n_episodes=n_eval_episodes, max_deals=max_deals
     )
     print(f"\n  Results:")
     print(f"    Win rate:        {100 * results['win_rate']:.1f}% ± {100 * results['ci_margins']['win']:.1f}% (95% CI)")
@@ -1092,7 +1095,7 @@ def run_sarsa(
         for i in range(1, n_players)
     ]
     results_skillful = evaluate_frozen_agent(
-        learning_agent, skillful_opponents, n_episodes=1000, max_deals=max_deals
+        learning_agent, skillful_opponents, n_episodes=n_eval_episodes, max_deals=max_deals
     )
     print(f"\n  Results:")
     print(f"    Win rate:        {100 * results_skillful['win_rate']:.1f}% ± {100 * results_skillful['ci_margins']['win']:.1f}% (95% CI)")
@@ -1127,7 +1130,7 @@ def run_sarsa(
         for i in range(1, n_players)
     ]
     results_consistent = evaluate_frozen_agent(
-        learning_agent, consistent_opponents, n_episodes=1000, max_deals=max_deals
+        learning_agent, consistent_opponents, n_episodes=n_eval_episodes, max_deals=max_deals
     )
     print(f"\n  Results:")
     print(f"    Win rate:        {100 * results_consistent['win_rate']:.1f}% ± {100 * results_consistent['ci_margins']['win']:.1f}% (95% CI)")
@@ -1164,13 +1167,13 @@ def run_sarsa(
             frozen_clones.append(clone)
 
         results = evaluate_frozen_agent(
-            learning_agent, frozen_clones, n_episodes=1000, max_deals=max_deals, progress_interval=100
+            learning_agent, frozen_clones, n_episodes=n_eval_episodes, max_deals=max_deals, progress_interval=100
         )
 
         fair_share = 1.0 / n_players
         print(f"\n  Results:")
         print(f"    Player 0 win rate: {100 * results['win_rate']:.1f}% ± {100 * results['ci_margins']['win']:.1f}% (95% CI)")
-        print(f"    Wins: {results['wins']}/1000")
+        print(f"    Wins: {results['wins']}/{n_eval_episodes}")
         if results['timeouts'] > 0:
             print(f"    Timeouts: {results['timeouts']}")
         print(f"    Expected (Nash equilibrium): {100 * fair_share:.1f}% ± {100 * results['ci_margins']['win']:.1f}%")

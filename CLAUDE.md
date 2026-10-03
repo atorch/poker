@@ -32,6 +32,9 @@ uv run python run_training.py
 uv run python interactive_play.py              # Normal mode
 uv run python interactive_play.py --full-info  # See opponents' cards
 
+# Benchmark an agent (duplicate-dealt chips/deal + bust-out win rate vs baseline bots)
+uv run python -m poker.benchmark
+
 # Grid search for hyperparameter tuning
 uv run python grid_search.py --mode medium
 ```
@@ -66,6 +69,7 @@ For detailed architecture information, see the README and code comments. Key are
 
 **Core Components**:
 - `poker/state.py`: Game state management, betting rounds, dealer rotation
+  - **All betting rules live here**: agents and the UI must get legal moves from `State.legal_actions()` / `State.is_legal()` rather than re-deriving them
 - `poker/cards.py`, `poker/hands.py`: Card representation and hand evaluation
 - `poker/config.py`: Action enums and wealth configuration
   - **CRITICAL**: Changing the `Action` enum requires retraining all models from scratch
@@ -100,7 +104,7 @@ See `tests/` directory for comprehensive test coverage. Key testing principles:
 
 ## Model Persistence
 
-Models are saved as Keras `.h5` weights files in the `models/` directory.
+Models are saved as Keras 3 `.weights.h5` files in the `models/` directory (`Agent.load_model` also reads legacy Keras 2 `.h5` weights files).
 
 **Important**: State representation changes invalidate old models. See code comments in `agent.py` for current state representation details.
 
@@ -108,5 +112,6 @@ Models are saved as Keras `.h5` weights files in the `models/` directory.
 
 See root directory for research notes and training logs:
 - `README.md`: Project overview and current status
-- `*.md` files: Design decisions and debugging notes
-- `training_output_*.txt`: Historical training run metrics
+- `LAY_OF_THE_LAND.md`: Current assessment and next steps
+- `archive/`: Old notes, scripts, grid search results and training logs (predate the Oct 2026 rules/evaluator fixes)
+- `logs/`: Training run logs written by `run_training.py` (gitignored)

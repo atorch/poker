@@ -75,15 +75,8 @@ class SkillfulRandomAgent:
         Returns:
             A legal action based on hand strength
         """
-        minimum_legal_bet = game_state.minimum_legal_bet()
-        maximum_legal_bet = game_state.maximum_legal_bet()
-
         # Get all legal actions
-        legal_actions = []
-        for action in self.actions:
-            # Folding (negative action) is always legal
-            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
-                legal_actions.append(action)
+        legal_actions = game_state.legal_actions(self.actions)
 
         # Check if we have a strong hand
         my_cards = game_state.hole_cards[self.player_index]

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from poker.play import run_sarsa
-from poker.agent import Agent
+from poker.agent import Agent, checkpoint_path
 from poker.random_agent import RandomAgent
 from poker.skillful_random_agent import SkillfulRandomAgent
 from poker.play import evaluate_frozen_agent, get_pocket_aces_bet_probability
@@ -44,7 +44,7 @@ QUICK_GRID_PARAMS_BATCH_SIZE = {
     'temperature': [1.0],
 }
 
-# Architecture comparison grid - test transformers vs MLPs
+# Architecture comparison grid - MLP sizes
 ARCHITECTURE_GRID = {
     'learning_rate': [0.0003],  # Best from batch_size experiments
     'batch_size': [8],  # Best from batch_size experiments
@@ -52,8 +52,6 @@ ARCHITECTURE_GRID = {
         (64, 64),           # Baseline MLP
         (128, 128),         # Bigger MLP
         (128, 128, 128),    # Deep MLP
-        'transformer_small', # Transformer: 2 heads, 64 dim, 1 layer (~40K params)
-        'transformer',      # Transformer: 4 heads, 128 dim, 2 layers (~291K params)
     ],
     'n_episodes': [500],  # Longer training for bigger models
     'epsilon_decay_rate': [200],
@@ -184,7 +182,7 @@ def run_single_configuration(config, config_id):
     # Create a unique directory for this configuration's models
     config_dir = RESULTS_DIR / f"config_{config_id}"
     config_dir.mkdir(parents=True, exist_ok=True)
-    model_path = str(config_dir / "model.h5")
+    model_path = str(config_dir / "model.weights.h5")
 
     # Determine checkpoint episodes based on n_episodes
     n_episodes = config['n_episodes']
@@ -230,10 +228,8 @@ def run_single_configuration(config, config_id):
                 # Final model
                 checkpoint_model_path = model_path
             else:
-                # Intermediate checkpoint (e.g., model_ep100.h5, model_ep200.h5)
-                model_dir = os.path.dirname(model_path)
-                model_name = os.path.splitext(os.path.basename(model_path))[0]
-                checkpoint_model_path = os.path.join(model_dir, f"{model_name}_ep{checkpoint_ep}.h5")
+                # Intermediate checkpoint (e.g., model_ep100.weights.h5)
+                checkpoint_model_path = checkpoint_path(model_path, checkpoint_ep)
 
             # Check if checkpoint exists
             if not os.path.exists(checkpoint_model_path):

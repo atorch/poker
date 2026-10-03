@@ -32,13 +32,4 @@ class RandomAgent:
         Returns:
             A randomly selected legal action
         """
-        minimum_legal_bet = game_state.minimum_legal_bet()
-        maximum_legal_bet = game_state.maximum_legal_bet()
-
-        legal_actions = []
-        for action in self.actions:
-            # Folding (negative action) is always legal
-            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
-                legal_actions.append(action)
-
-        return np.random.choice(legal_actions)
+        return np.random.choice(game_state.legal_actions(self.actions))

@@ -1,4 +1,6 @@
 import os
+import warnings
+
 import numpy as np
 from collections import deque
 
@@ -8,12 +10,34 @@ from poker.q_function import get_model
 from poker.config import TYPICAL_INITIAL_WEALTH, DEFAULT_ACTIONS, MAX_INITIAL_WEALTH
 
 
+def weights_path(filepath):
+    """Map a model path to the `.weights.h5` filename Keras 3 requires for save_weights."""
+    if filepath.endswith(".weights.h5"):
+        return filepath
+    if filepath.endswith(".h5"):
+        return filepath[: -len(".h5")] + ".weights.h5"
+    return filepath + ".weights.h5"
+
+
+def legacy_weights_path(filepath):
+    """Map a model path to the legacy Keras 2 `.h5` weights filename."""
+    if filepath.endswith(".weights.h5"):
+        return filepath[: -len(".weights.h5")] + ".h5"
+    return filepath
+
+
+def checkpoint_path(model_path, episode):
+    """Episode-numbered checkpoint next to model_path, e.g. models/player_0_latest_ep100.weights.h5"""
+    stem = weights_path(model_path)[: -len(".weights.h5")]
+    return f"{stem}_ep{episode}.weights.h5"
+
+
 class ReplayBuffer:
     """
     Experience replay buffer for storing and sampling transitions.
 
-    Stores (state, action, reward, next_state) tuples and allows sampling
-    random mini-batches for training. This stabilizes learning by:
+    Stores (state, action, reward, next_state, next_legal_mask, done) tuples and allows
+    sampling random mini-batches for training. This stabilizes learning by:
     1. Breaking temporal correlations between consecutive samples
     2. Allowing multiple updates from the same experience
     3. Reducing variance in gradient estimates
@@ -26,7 +50,7 @@ class ReplayBuffer:
         """
         self.buffer = deque(maxlen=capacity)
 
-    def add(self, state, action, reward, next_state):
+    def add(self, state, action, reward, next_state, next_legal_mask, done):
         """
         Add a transition to the buffer.
 
@@ -35,8 +59,11 @@ class ReplayBuffer:
             action: Action taken (int)
             reward: Immediate reward received (float)
             next_state: Next private state representation (list/array)
+            next_legal_mask: Boolean array (aligned with the agent's actions) of actions
+                that are legal in next_state; used to compute bootstrap targets
+            done: True if next_state is terminal (no bootstrapping)
         """
-        self.buffer.append((state, action, reward, next_state))
+        self.buffer.append((state, action, reward, next_state, np.asarray(next_legal_mask, dtype=bool), done))
 
     def sample(self, batch_size):
         """
@@ -46,7 +73,7 @@ class ReplayBuffer:
             batch_size: Number of transitions to sample
 
         Returns:
-            Tuple of (states, actions, rewards, next_states) as numpy arrays
+            Tuple of (states, actions, rewards, next_states, next_legal_masks, dones) as numpy arrays
         """
         if len(self.buffer) < batch_size:
             # If buffer doesn't have enough samples, return all available
@@ -55,13 +82,15 @@ class ReplayBuffer:
         indices = np.random.choice(len(self.buffer), batch_size, replace=False)
         batch = [self.buffer[i] for i in indices]
 
-        states, actions, rewards, next_states = zip(*batch)
+        states, actions, rewards, next_states, next_legal_masks, dones = zip(*batch)
 
         return (
             np.array(states),
             np.array(actions),
             np.array(rewards),
-            np.array(next_states)
+            np.array(next_states),
+            np.array(next_legal_masks),
+            np.array(dones),
         )
 
     def __len__(self):
@@ -140,34 +169,55 @@ class Agent:
         self.model = get_model(n_actions=len(self.actions), n_inputs=self.n_inputs, learning_rate=learning_rate, hidden_layers=hidden_layers)
 
     def save_model(self, filepath):
-        """Save the trained model weights to disk."""
+        """Save the trained model weights to disk (Keras 3 requires a .weights.h5 suffix)."""
+        filepath = weights_path(filepath)
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         self.model.save_weights(filepath)
         print(f"Model saved to {filepath}")
 
     def load_model(self, filepath):
-        """Load trained model weights from disk."""
-        if os.path.exists(filepath):
-            try:
-                self.model.load_weights(filepath)
-                print(f"Model loaded from {filepath}")
-                return True
-            except ValueError as e:
-                print(f"Warning: Could not load model from {filepath}")
-                print(f"  Error: {e}")
-                print(f"  This is likely due to a state representation change.")
-                print(f"  Starting with fresh model instead.")
-                return False
-        else:
+        """
+        Load trained model weights from disk.
+
+        Accepts either a Keras 3 `.weights.h5` file or a legacy Keras 2 `.h5` weights file.
+        If `filepath` does not exist, the other suffix is tried as a fallback.
+        """
+        candidates = [filepath, weights_path(filepath), legacy_weights_path(filepath)]
+        existing = [path for path in dict.fromkeys(candidates) if os.path.exists(path)]
+        if not existing:
             print(f"No model found at {filepath}, starting fresh")
+            return False
+
+        filepath = existing[0]
+        try:
+            with warnings.catch_warnings():
+                # Note: optimizer state isn't restored (only the network weights), which is fine
+                #  for play and for starting a new training run
+                warnings.filterwarnings("ignore", message="Skipping variable loading for optimizer")
+                self.model.load_weights(filepath)
+            print(f"Model loaded from {filepath}")
+            return True
+        except ValueError as e:
+            print(f"Warning: Could not load model from {filepath}")
+            print(f"  Error: {e}")
+            print(f"  This is likely due to a state representation change.")
+            print(f"  Starting with fresh model instead.")
             return False
 
     def set_learning_rate(self, learning_rate):
         """Update the learning rate of the optimizer."""
-        import tensorflow.keras.backend as K
         self.learning_rate = learning_rate
-        K.set_value(self.model.optimizer.learning_rate, learning_rate)
+        self.model.optimizer.learning_rate.assign(learning_rate)
+
+    def q_values(self, model_input):
+        """
+        Predicted Q-values for a batch of (state, action) model inputs, as a 1-D numpy array.
+
+        Calls the model directly rather than through Keras' predict method, which has
+        large per-call overhead and is a bottleneck when called once per decision.
+        """
+        return self.model(np.asarray(model_input, dtype=np.float32), training=False).numpy()[:, 0]
 
     def pretrain_on_wealth_heuristic(self, n_samples=2000, n_epochs=500, batch_size=32, verbose=1):
         """
@@ -235,11 +285,11 @@ class Agent:
             state[GAME_STAGE_INDEX] = 0  # GameStage.PRE_FLOP
 
             # Generate random hole cards to determine hand strength
-            # Sample ranks uniformly from 2 (TWO) to 14 (ACE)
-            rank1 = int(np.random.randint(2, 15))
-            rank2 = int(np.random.randint(2, 15))
-            suit1 = int(np.random.randint(1, 5))  # 1-4 for suits
-            suit2 = int(np.random.randint(1, 5))
+            # Note: same encoding as get_private_state: Rank values 0 (TWO) to 12 (ACE), Suit values 0-3
+            rank1 = int(np.random.randint(len(Rank)))
+            rank2 = int(np.random.randint(len(Rank)))
+            suit1 = int(np.random.randint(len(Suit)))
+            suit2 = int(np.random.randint(len(Suit)))
 
             state[HOLE_CARD_1_RANK] = rank1
             state[HOLE_CARD_1_SUIT] = suit1
@@ -364,18 +414,18 @@ class Agent:
         - Pair of tens or better (TT, JJ, QQ, KK, AA)
 
         Args:
-            rank1: Rank of first card (2-14, where 14=Ace)
-            rank2: Rank of second card (2-14, where 14=Ace)
+            rank1: Rank value of first card (Rank enum value: 0=TWO, ..., 12=ACE)
+            rank2: Rank value of second card
 
         Returns:
             bool: True if hand is strong
         """
         # Any hand with an Ace is strong
-        if rank1 == 14 or rank2 == 14:  # ACE = 14
+        if rank1 == Rank.ACE or rank2 == Rank.ACE:
             return True
 
         # Pair of tens or better (TT+)
-        if rank1 == rank2 and rank1 >= 10:  # TEN = 10
+        if rank1 == rank2 and rank1 >= Rank.TEN:
             return True
 
         return False
@@ -391,7 +441,7 @@ class Agent:
 
             model_input = self.get_model_input(private_state, self.actions)
 
-            q = self.model.predict(model_input)[:, 0]
+            q = self.q_values(model_input)
 
             print(
                 f"Value at stage {game_state.game_stage.name} with private cards {private_cards}: {q}"
@@ -421,7 +471,7 @@ class Agent:
             game_state.hole_cards[self.player_index] = hole_cards
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
-            q_values = self.model.predict(model_input, verbose=0)[:, 0]
+            q_values = self.q_values(model_input)
 
             action_strs = [f"fold" if a < 0 else f"bet ${a}" for a in self.actions]
             highest_q_idx = np.argmax(q_values)
@@ -449,7 +499,7 @@ class Agent:
 
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
-            q_values = self.model.predict(model_input, verbose=0)[:, 0]
+            q_values = self.q_values(model_input)
 
             action_strs = [f"fold" if a < 0 else f"bet ${a}" for a in self.actions]
             highest_q_idx = np.argmax(q_values)
@@ -462,7 +512,7 @@ class Agent:
             game_state = State(n_players=self.n_players, initial_wealth=TYPICAL_INITIAL_WEALTH)
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
-            q_values = self.model.predict(model_input, verbose=0)[:, 0]
+            q_values = self.q_values(model_input)
 
             fold_idx = self.actions.index(-1)
             check_idx = self.actions.index(0)
@@ -491,7 +541,7 @@ class Agent:
             game_state.hole_cards[self.player_index] = hole_cards
             private_state = self.get_private_state(game_state)
             model_input = self.get_model_input(private_state, self.actions)
-            q_values = self.model.predict(model_input, verbose=0)[:, 0]
+            q_values = self.q_values(model_input)
 
             fold_idx = self.actions.index(-1)
             check_idx = self.actions.index(0)
@@ -554,26 +604,20 @@ class Agent:
 
         return private_state
 
-    def random_legal_action(self, minimum_legal_bet, maximum_legal_bet):
+    def random_legal_action(self, game_state):
 
-        action_probabilities = []
-        for action in self.actions:
+        return np.random.choice(game_state.legal_actions(self.actions))
 
-            # Note: negative actions indicate folding, which is always a legal action
-            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
-                action_probabilities.append(1.0)
-            else:
-                action_probabilities.append(0.0)
+    def legal_action_mask(self, game_state):
+        """Boolean array aligned with self.actions: True where the action is legal."""
 
-        action_probabilities = np.array(action_probabilities) / sum(
-            action_probabilities
-        )
-        return np.random.choice(self.actions, p=action_probabilities)
+        legal_actions = set(game_state.legal_actions(self.actions))
+        return np.array([action in legal_actions for action in self.actions])
 
     def predicted_q(self, private_state, action):
 
         model_input = self.get_model_input(private_state, actions=[action])
-        return self.model.predict(model_input)[0, 0]
+        return self.q_values(model_input)[0]
 
     def get_model_input(self, private_state, actions):
 
@@ -589,11 +633,12 @@ class Agent:
     def update_q(self, private_state, action, updated_guess_for_q):
 
         model_input = self.get_model_input(private_state, actions=[action])
-        y = np.array([updated_guess_for_q])
 
-        self.model.fit(
-            x=model_input, y=y, epochs=1, batch_size=1, steps_per_epoch=1, verbose=0
-        )
+        # Note: targets are always shaped (batch_size, 1) to match the model output
+        #  (Keras 3 fails if calls alternate between (n,) and (n, 1) targets)
+        y = np.array([[updated_guess_for_q]], dtype=np.float32)
+
+        self.model.train_on_batch(model_input.astype(np.float32), y)
 
     def update_q_batch(self, states, actions, target_q_values):
         """
@@ -618,38 +663,27 @@ class Agent:
             model_input[i] = state_action_input[0]
 
         # Perform single batch update
-        self.model.fit(
-            x=model_input,
-            y=target_q_values,
-            epochs=1,
-            batch_size=batch_size,
-            verbose=0
-        )
+        # Note: targets are always shaped (batch_size, 1) to match the model output
+        #  (Keras 3 fails if calls alternate between (n,) and (n, 1) targets)
+        y = np.asarray(target_q_values, dtype=np.float32).reshape(-1, 1)
+        self.model.train_on_batch(model_input.astype(np.float32), y)
 
     def get_action(self, game_state, proba_random_action=0.8):
 
-        minimum_legal_bet = game_state.minimum_legal_bet()
-        maximum_legal_bet = game_state.maximum_legal_bet()
-
         if np.random.uniform() < proba_random_action:
 
-            return self.random_legal_action(minimum_legal_bet, maximum_legal_bet)
+            return self.random_legal_action(game_state)
 
         private_state = self.get_private_state(game_state)
 
         model_input = self.get_model_input(private_state, self.actions)
 
         # Note: the model returns predicted action-values of shape (len(self.actions), 1)
-        q_at_private_state = self.model.predict(model_input)[:, 0]
+        q_at_private_state = self.q_values(model_input)
 
-        for index, action in enumerate(self.actions):
-
-            # Fold (action < 0) is always legal
-            # Only check legality for bet/call actions (action >= 0)
-            if action >= 0 and ((action < minimum_legal_bet) or (action > maximum_legal_bet)):
-                # Note: we temporarily set q to -Inf at illegal actions, so that
-                #  softmax will assign them probability 0
-                q_at_private_state[index] = -np.inf
+        # Note: we set q to -Inf at illegal actions, so that
+        #  softmax will assign them probability 0
+        q_at_private_state[~self.legal_action_mask(game_state)] = -np.inf
 
         # Use softmax policy to sample actions probabilistically
         # This enables mixed strategies, which are essential for poker Nash equilibria

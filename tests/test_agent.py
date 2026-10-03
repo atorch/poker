@@ -234,3 +234,40 @@ def test_public_cards_all_stages():
     public_cards_slice = private_state[8:18]
     assert -1 not in public_cards_slice, \
         "River stage should have all 5 public cards encoded (no -1 values)"
+
+
+def test_replay_buffer_stores_legal_mask_and_done():
+    from poker.agent import ReplayBuffer
+
+    buffer = ReplayBuffer(capacity=10)
+    state, next_state = [0.0] * 4, [1.0] * 4
+    buffer.add(state, 3, -2.0, next_state, [False, True, True, False, False], False)
+    buffer.add(state, 0, 5.0, next_state, [False] * 5, True)
+
+    states, actions, rewards, next_states, next_legal_masks, dones = buffer.sample(2)
+
+    assert states.shape == next_states.shape == (2, 4)
+    assert next_legal_masks.dtype == bool and next_legal_masks.shape == (2, 5)
+    assert sorted(dones.tolist()) == [False, True]
+    assert sorted(rewards.tolist()) == [-2.0, 5.0]
+
+
+def test_legal_action_mask_matches_state_legal_actions():
+    agent = Agent(player_index=0, n_players=3)
+    game_state = State(n_players=3, initial_wealth=20, initial_dealer=0)
+
+    # Note: player 0 is first to act pre-flop, facing the big blind
+    mask = agent.legal_action_mask(game_state)
+    legal = [action for action, is_legal in zip(agent.actions, mask) if is_legal]
+    assert legal == game_state.legal_actions(agent.actions) == [-1, 2, 3]
+
+
+def test_pretraining_strong_hand_uses_game_rank_encoding():
+    from poker.cards import Rank
+
+    agent = Agent(player_index=0, n_players=3)
+
+    assert agent._is_strong_hand_from_ranks(Rank.ACE, Rank.TWO)
+    assert agent._is_strong_hand_from_ranks(Rank.TEN, Rank.TEN)
+    assert not agent._is_strong_hand_from_ranks(Rank.NINE, Rank.NINE)
+    assert not agent._is_strong_hand_from_ranks(Rank.KING, Rank.QUEEN)

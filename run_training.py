@@ -3,12 +3,13 @@
 Wrapper script to run poker training with output logged to both terminal and file.
 
 Usage:
-    uv run python run_training.py
+    uv run python run_training.py [short_description]
 
 Output will be displayed in terminal AND saved to:
-    training_output_YYYY_MM_DD_<description>.txt
+    logs/training_output_YYYY_MM_DD_HHMM_<description>.txt
 """
 
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -17,8 +18,9 @@ from datetime import datetime
 def main():
     # Generate timestamped filename with hour/minute to avoid overwrites
     timestamp = datetime.now().strftime("%Y_%m_%d_%H%M")
-    description = "v4_consistent_random_agent_curriculum"
-    output_file = f"training_output_{timestamp}_{description}.txt"
+    description = sys.argv[1] if len(sys.argv) > 1 else "run"
+    os.makedirs("logs", exist_ok=True)
+    output_file = os.path.join("logs", f"training_output_{timestamp}_{description}.txt")
 
     print(f"Starting training...")
     print(f"Output will be saved to: {output_file}")

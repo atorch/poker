@@ -6,7 +6,7 @@ Usage:
     uv run python interactive_play.py              # Normal mode (hidden opponents' cards)
     uv run python interactive_play.py --full-info  # Full info mode (see opponents' cards)
 
-The AI agents use the latest trained model from models/player_0_latest.h5
+The AI agents use the latest trained model from models/player_0_latest.weights.h5
 You are player 0, and you'll be prompted for actions each turn.
 """
 
@@ -33,7 +33,7 @@ def display_showdown(state, human_player_index, full_info=False):
         return  # No deal has completed yet
 
     print("\n" + "="*70)
-    print("SHOWDOWN")
+    print("HAND OVER (everyone else folded)" if state.last_deal_won_by_fold else "SHOWDOWN")
     print("="*70)
 
     # Show winner(s)
@@ -42,22 +42,23 @@ def display_showdown(state, human_player_index, full_info=False):
         label = "YOU" if winner_idx == human_player_index else f"Player {winner_idx}"
         winner_labels.append(label)
 
-    winners_str = " and ".join(winner_labels)
     pot_str = f"${state.last_deal_pot:.0f}"
+    if len(winner_labels) == 1:
+        verb = "win" if winner_labels[0] == "YOU" else "wins"
+        result_str = f"{winner_labels[0]} {verb} the {pot_str} pot!"
+    else:
+        result_str = f"{' and '.join(winner_labels)} split the {pot_str} pot"
+
+    print(f"\n{result_str}")
+    print_net_results(state, human_player_index)
 
     if state.last_deal_won_by_fold:
-        # Win by fold
         folded_labels = []
         for folded_idx in state.last_deal_folded_players:
             label = "You" if folded_idx == human_player_index else f"Player {folded_idx}"
             folded_labels.append(label)
-        folded_str = ", ".join(folded_labels)
-
-        print(f"\n{winners_str} wins {pot_str}!")
-        print(f"Reason: {folded_str} folded\n")
+        print(f"Reason: {', '.join(folded_labels)} folded\n")
     else:
-        # Win by showdown
-        print(f"\n{winners_str} wins {pot_str}!")
         print()
 
         # Show all players' hands (active and folded)
@@ -68,13 +69,16 @@ def display_showdown(state, human_player_index, full_info=False):
 
             # Show hand info
             if i in state.last_deal_folded_players:
-                print(f"  {player_label}: {hole_cards_str} [FOLDED]")
+                # Note: folded cards stay hidden unless it's your own hand or full-info mode
+                if full_info or i == human_player_index:
+                    print(f"  {player_label}: {hole_cards_str} [FOLDED]")
+                else:
+                    print(f"  {player_label}: [FOLDED]")
             else:
                 hand_desc = state.last_deal_hand_descriptions[i]
-                hand_str = state.last_deal_hand_strengths[i]
                 winner_marker = " 🏆" if i in state.last_deal_winners else ""
                 print(f"  {player_label}: {hole_cards_str}")
-                print(f"    → {hand_desc} (strength: {hand_str:.1f}){winner_marker}")
+                print(f"    → {hand_desc}{winner_marker}")
 
         # Show community cards
         if state.last_deal_public_cards:
@@ -82,6 +86,27 @@ def display_showdown(state, human_player_index, full_info=False):
             print(f"\n  Community: {public_cards_str}")
 
     print("\n" + "="*70)
+
+
+def print_net_results(state, human_player_index):
+    """Print each player's net chip change for the deal that just finished."""
+    pot = state.last_deal_pot
+    winners = state.last_deal_winners
+    for i, bet in enumerate(state.last_deal_bets_by_player):
+        player_label = "You" if i == human_player_index else f"Player {i}"
+        if i in winners:
+            # Note: approximate for split pots with an odd chip (State gives it to one winner)
+            net = (pot - sum(state.last_deal_bets_by_player[j] for j in winners)) / len(winners)
+        else:
+            net = -bet
+        print(f"  {player_label}: {net:+.0f}")
+
+
+def announce_new_stage(state):
+    """Print the public cards when play moves to a new stage within the same deal."""
+    stage_names = {GameStage.FLOP: "FLOP", GameStage.TURN: "TURN", GameStage.RIVER: "RIVER"}
+    public_cards_str = ", ".join(str(card) for card in state.public_cards)
+    print(f"\n--- {stage_names[state.game_stage]}: {public_cards_str} (pot ${state.total_bets():.0f}) ---")
 
 
 def display_game_state(state, human_player_index, full_info=False):
@@ -134,8 +159,7 @@ def display_game_state(state, human_player_index, full_info=False):
             status = " [ACTING NOW]"
 
         print(f"Player {i} ({player_label}){status}")
-        print(f"  Wealth: ${wealth:.0f}")
-        print(f"  Total bet this hand: ${total_bet:.0f}")
+        print(f"  Stack: ${wealth - total_bet:.0f} behind, ${total_bet:.0f} in the pot (started hand with ${wealth:.0f})")
 
         # Show hole cards
         if i == human_player_index:
@@ -166,24 +190,15 @@ def get_human_action(state):
         int: The chosen action
     """
     min_bet = state.minimum_legal_bet()
-    max_bet = state.maximum_legal_bet()
 
     print(f"\nYour turn to act!")
 
     # Build action menu using DEFAULT_ACTIONS (what the AI was trained with)
     print(f"\nAvailable actions:")
 
-    legal_default_actions = []
-    for action in DEFAULT_ACTIONS:
-        # Check if this action is legal
-        if action < 0:  # Fold is always legal
-            action_desc = describe_action(action, min_bet)
-            print(f"  {int(action)}: {action_desc}")
-            legal_default_actions.append(action)
-        elif min_bet <= action <= max_bet:  # Check/Call/Bet/Raise must be in legal range
-            action_desc = describe_action(action, min_bet)
-            print(f"  {int(action)}: {action_desc}")
-            legal_default_actions.append(action)
+    legal_default_actions = state.legal_actions(DEFAULT_ACTIONS)
+    for action in legal_default_actions:
+        print(f"  {int(action)}: {describe_action(action, min_bet)}")
 
     # Get input - only allow actions from legal_default_actions
     while True:
@@ -205,7 +220,7 @@ def get_human_action(state):
             sys.exit(0)
 
 
-def play_interactive_game(model_path="models/player_0_latest.h5", full_info=False, initial_wealth=TYPICAL_INITIAL_WEALTH, max_deals=50):
+def play_interactive_game(model_path="models/player_0_latest.weights.h5", full_info=False, initial_wealth=TYPICAL_INITIAL_WEALTH, max_deals=50):
     """
     Play an interactive game against AI agents.
 
@@ -289,14 +304,11 @@ def play_interactive_game(model_path="models/player_0_latest.h5", full_info=Fals
                 # Compute Q-values and probabilities (same logic as agent.get_action)
                 private_state = agent.get_private_state(state)
                 model_input = agent.get_model_input(private_state, agent.actions)
-                q_values = agent.model.predict(model_input, verbose=0)[:, 0]
+                q_values = agent.q_values(model_input)
 
                 # Apply legality constraints
                 min_bet = state.minimum_legal_bet()
-                max_bet = state.maximum_legal_bet()
-                for index, act in enumerate(agent.actions):
-                    if act >= 0 and ((act < min_bet) or (act > max_bet)):
-                        q_values[index] = -np.inf
+                q_values[~agent.legal_action_mask(state)] = -np.inf
 
                 # Compute softmax probabilities
                 action_probs = softmax_with_temperature(q_values, agent.temperature)
@@ -313,22 +325,22 @@ def play_interactive_game(model_path="models/player_0_latest.h5", full_info=Fals
 
             # Show compact AI action (before state update so we can see what they added)
             old_bet = state.total_bet_by_player(current_player)
-            if action < 0:
-                print(f">>> Player {current_player} (AI) folds")
-            else:
-                # Action is the amount they're adding this betting round
-                print(f">>> Player {current_player} (AI) action={action} (total bet: ${old_bet:.0f} → ${old_bet + action:.0f})")
+            action_desc = describe_action(action, state.minimum_legal_bet())
+            print(f">>> Player {current_player} (AI): {action_desc} (in pot: ${old_bet:.0f} → ${old_bet + max(action, 0):.0f})")
 
-        # Track deal number before update
+        # Track deal number and stage before update
         deal_before_update = state.n_deals
+        stage_before_update = state.game_stage
 
         # Update game state
         state.update(action)
 
-        # Check if a deal just completed (n_deals incremented)
-        if state.n_deals > deal_before_update and not state.terminal:
+        # Check if a deal just completed (n_deals incremented, or the game ended)
+        if state.n_deals > deal_before_update or state.terminal:
             # Display showdown result
             display_showdown(state, human_player_index, full_info)
+        elif state.game_stage != stage_before_update:
+            announce_new_stage(state)
 
     # Game over - show results
     # Note: The last deal's showdown was already displayed via display_showdown()
@@ -376,13 +388,13 @@ Examples:
     parser.add_argument(
         "--model",
         type=str,
-        default="models/player_0_latest.h5",
-        help="Path to trained model file (default: models/player_0_latest.h5)"
+        default="models/player_0_latest.weights.h5",
+        help="Path to trained model file (default: models/player_0_latest.weights.h5)"
     )
 
     parser.add_argument(
         "--wealth",
-        type=float,
+        type=int,
         default=TYPICAL_INITIAL_WEALTH,
         help=f"Initial wealth for each player (default: {TYPICAL_INITIAL_WEALTH})"
     )
