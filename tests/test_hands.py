@@ -1,4 +1,10 @@
-from poker.cards import Suit, Rank, Card
+from collections import Counter
+from itertools import combinations
+from random import Random
+
+import pytest
+
+from poker.cards import Suit, Rank, Card, FULL_DECK
 from poker.hands import best_hand_strength, is_straight, strength, sort_hand
 
 
@@ -296,7 +302,7 @@ def test_hand_strengh():
 def test_two_pair_tie_breaking():
     """
     Test that two-pair hands are correctly ordered by their higher pair.
-    This verifies the tie-breaking logic in hands.py that returns 200 + higher_pair.
+    (Lower pair and kicker tiebreaks are covered in test_kickers_and_lower_pairs_break_ties.)
     """
     # Aces and Twos (AA22x) - higher pair is Aces
     aces_and_twos = [
@@ -333,3 +339,206 @@ def test_two_pair_tie_breaking():
     assert strength_aces_twos > strength_kings_queens
     assert strength_kings_queens > strength_jacks_threes
     assert strength_aces_twos > strength_jacks_threes
+
+
+def cards(text):
+    """Parse a compact hand like "Js 7h Ad" into Card objects (T = ten)."""
+    ranks = {"2": Rank.TWO, "3": Rank.THREE, "4": Rank.FOUR, "5": Rank.FIVE, "6": Rank.SIX,
+             "7": Rank.SEVEN, "8": Rank.EIGHT, "9": Rank.NINE, "T": Rank.TEN, "J": Rank.JACK,
+             "Q": Rank.QUEEN, "K": Rank.KING, "A": Rank.ACE}
+    suits = {"h": Suit.HEARTS, "d": Suit.DIAMONDS, "c": Suit.CLUBS, "s": Suit.SPADES}
+    return [Card(ranks[token[0]], suits[token[1]]) for token in text.split()]
+
+
+def test_board_two_pair_ace_kicker_wins_outright():
+    # Regression: this showdown was scored as a three-way tie (kickers were ignored)
+    board = cards("7s Jh Ts Js 7h")
+    king_kicker = best_hand_strength(board, cards("3h Kd"))[0]
+    board_plays = best_hand_strength(board, cards("2d 8h"))[0]
+    ace_kicker = best_hand_strength(board, cards("6d Ac"))[0]
+
+    assert ace_kicker > king_kicker > board_plays
+
+
+@pytest.mark.parametrize(
+    "better, worse",
+    [
+        ("Jh Js 7c 7d 5h", "Jc Jd 3c 3d Ah"),  # two pair: lower pair matters
+        ("Jh Js 7c 7d Ah", "Jc Jd 7h 7s Kh"),  # two pair: kicker matters
+        ("9h 9s Ac 4d 3h", "9c 9d Kc Qd Jh"),  # pair: first kicker
+        ("9h 9s Ac Kd 3h", "9c 9d Ah Qd Jh"),  # pair: second kicker
+        ("9h 9s Ac Kd 4h", "9c 9d Ah Kh 3c"),  # pair: third kicker
+        ("Ah Kd 9c 5s 4h", "As Kc 9d 5h 3c"),  # high card: fifth card
+        ("5h 5s 5c Ad 2h", "5h 5s 5c Kd Qh"),  # trips: kicker
+        ("Kh Ks Kc 3d 3h", "Kh Ks Kc 2d 2h"),  # full house: pair breaks ties on a trips board
+        ("Qh Qs Qc Qd Ah", "Qh Qs Qc Qd Kh"),  # quads: kicker
+        ("Ah Jh 9h 6h 4h", "As Js 9s 6s 3s"),  # flush: lower cards
+    ],
+)
+def test_kickers_and_lower_pairs_break_ties(better, worse):
+    assert strength(cards(better))[0] > strength(cards(worse))[0]
+
+
+@pytest.mark.parametrize(
+    "hand, other",
+    [
+        ("Ah Kd 9c 5s 4h", "As Kc 9d 5h 4c"),  # identical ranks, different suits
+        ("6h 5d 4c 3s 2h", "6s 5c 4d 3h 2c"),  # same straight
+        ("5h 4d 3c 2s Ah", "5s 4c 3d 2h As"),  # same wheel
+    ],
+)
+def test_genuine_ties(hand, other):
+    assert strength(cards(hand))[0] == strength(cards(other))[0]
+
+
+def test_wheel_is_lowest_straight():
+    assert strength(cards("6h 5d 4c 3s 2h"))[0] > strength(cards("5h 4d 3c 2s Ah"))[0]
+    assert strength(cards("5h 4d 3c 2s Ah"))[0] > strength(cards("Ah Ad Ac Ks Qh"))[0]
+
+
+def reference_strength(hand):
+    """Independent, deliberately simple evaluator used to cross-check strength()."""
+    ranks = sorted((int(card.rank) for card in hand), reverse=True)
+    counts = Counter(ranks)
+    by_group = tuple(sorted(counts, key=lambda rank: (counts[rank], rank), reverse=True))
+    shape = sorted(counts.values(), reverse=True)
+    flush = len({card.suit for card in hand}) == 1
+    distinct = sorted(set(ranks), reverse=True)
+    straight_high = None
+    if len(distinct) == 5 and distinct[0] - distinct[4] == 4:
+        straight_high = distinct[0]
+    elif distinct == [12, 3, 2, 1, 0]:
+        straight_high = 3
+
+    if straight_high is not None and flush:
+        return (8, (straight_high,))
+    if shape == [4, 1]:
+        return (7, by_group)
+    if shape == [3, 2]:
+        return (6, by_group)
+    if flush:
+        return (5, tuple(ranks))
+    if straight_high is not None:
+        return (4, (straight_high,))
+    if shape == [3, 1, 1]:
+        return (3, by_group)
+    if shape == [2, 2, 1]:
+        return (2, by_group)
+    if shape == [2, 1, 1, 1]:
+        return (1, by_group)
+    return (0, tuple(ranks))
+
+
+def test_strength_ordering_matches_reference_evaluator():
+    rng = Random(0)
+    for _ in range(3000):
+        deck = rng.sample(FULL_DECK, 10)
+        hand, other = deck[:5], deck[5:]
+
+        ours = strength(hand)[0], strength(other)[0]
+        reference = reference_strength(hand), reference_strength(other)
+
+        assert (ours[0] > ours[1]) == (reference[0] > reference[1])
+        assert (ours[0] == ours[1]) == (reference[0] == reference[1])
+
+
+def test_best_hand_strength_matches_reference_on_seven_cards():
+    rng = Random(1)
+    for _ in range(300):
+        deck = rng.sample(FULL_DECK, 9)
+        board, first_hole, second_hole = deck[:5], deck[5:7], deck[7:]
+
+        ours = [best_hand_strength(board, hole)[0] for hole in (first_hole, second_hole)]
+        reference = [
+            max(reference_strength(five) for five in combinations(board + hole, 5))
+            for hole in (first_hole, second_hole)
+        ]
+
+        assert (ours[0] > ours[1]) == (reference[0] > reference[1])
+        assert (ours[0] == ours[1]) == (reference[0] == reference[1])
+
+
+def all_five_card_hand_classes():
+    """
+    One five-card hand for every distinct rank multiset (suits chosen so it isn't a flush),
+    plus a flush for every set of five distinct ranks: every equivalence class of five-card hands.
+    """
+    from itertools import combinations_with_replacement
+
+    hands = []
+    for ranks in combinations_with_replacement(list(Rank), 5):
+        if max(Counter(ranks).values()) == 5:
+            continue
+        # Note: copies of a rank are adjacent, so cycling suits gives them distinct suits (and no flush)
+        hands.append([Card(rank, Suit(i % 4)) for i, rank in enumerate(ranks)])
+    for ranks in combinations(list(Rank), 5):
+        hands.append([Card(rank, Suit.HEARTS) for rank in ranks])
+    return hands
+
+
+def dense_ranks(values):
+    order = {value: i for i, value in enumerate(sorted(set(values)))}
+    return [order[value] for value in values]
+
+
+def test_every_five_card_hand_class_matches_reference_evaluator():
+    """Exhaustive: the same ordering as the reference on all classes, and exactly 7462 distinct values."""
+    hands = all_five_card_hand_classes()
+    ours = [strength(hand)[0] for hand in hands]
+    reference = [reference_strength(hand) for hand in hands]
+    assert len(set(ours)) == len(set(reference)) == 7462
+    assert dense_ranks(ours) == dense_ranks(reference)
+
+
+@pytest.mark.parametrize("hand, description", [
+    ("As Ad 2c 3h 4s", "a pair of ACEs"),
+    ("As Ad Ac 2h 3s", "three ACEs"),
+    ("As 2d 3c 4h 5s", "a straight ending in a FIVE"),
+])
+def test_ace_only_plays_low_in_the_wheel(hand, description):
+    """Regression: A A 2 3 4 and A A A 2 3 used to be scored as ace-high straights."""
+    assert strength(cards(hand))[1].startswith(description)
+
+
+def test_pair_of_aces_with_two_three_four_is_not_a_straight_in_seven_cards():
+    board = cards("Kd Ah 4d Ad Jh")
+    pair_of_aces = best_hand_strength(board, cards("3h 2s"))
+    two_pair = best_hand_strength(board, cards("Jd 2h"))
+    assert pair_of_aces[1].startswith("a pair of ACEs")
+    assert two_pair[0] > pair_of_aces[0]
+
+
+def test_direct_evaluator_matches_combinations_on_random_hands():
+    from poker.hands import best_hand_strength_by_combinations
+
+    rng = Random(2)
+    for n_cards in [5, 6, 7]:
+        for _ in range(2000):
+            dealt = rng.sample(FULL_DECK, n_cards)
+            assert best_hand_strength(dealt[2:], dealt[:2]) == best_hand_strength_by_combinations(dealt[2:], dealt[:2])
+
+
+def test_direct_evaluator_matches_on_every_five_card_class():
+    for hand in all_five_card_hand_classes():
+        assert best_hand_strength(hand, []) == strength(hand)
+
+
+@pytest.mark.parametrize("seven_cards", [
+    "Ah Ad Ac Kh Kd Ks 2c",     # two sets of trips: aces full of kings
+    "Ah Ad Ac As Kh Kd Ks",     # quads and trips: kings are the kicker
+    "Ah Ad Ac Kh Kd Qs Qc",     # trips and two pairs
+    "Ah Ad Kh Kd Qs Qc 2c",     # three pairs: the third pair's rank is the kicker
+    "9h Th Jh Qh Kh 2h Ah",     # six suited cards including a royal flush
+    "Ah 2h 3h 4h 5h 6c Kd",     # steel wheel
+    "Ah 2h 3h 4h 5h 6h Kd",     # six-high straight flush beats the steel wheel
+    "Ah 2c 3d 4s 5h 6c Kd",     # wheel and six-high straight
+    "2h 5h 9h Jh Kh 3c 4d",     # flush and no straight flush
+    "6h 7h 8h 9h Jh Ts 2c",     # flush beats the straight in the same cards
+    "Kh Kd Kc 7h 9h 2h 4h",     # trips with a flush: the flush wins
+    "Kh Kd Kc 7h 7d 2h 4h",     # full house beats the four-card flush draw
+])
+def test_direct_evaluator_on_rare_seven_card_shapes(seven_cards):
+    from poker.hands import best_hand_strength_by_combinations
+
+    dealt = cards(seven_cards)
+    assert best_hand_strength(dealt[2:], dealt[:2]) == best_hand_strength_by_combinations(dealt[2:], dealt[:2])

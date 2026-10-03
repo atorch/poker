@@ -1,5 +1,7 @@
 import numpy as np
 
+from poker.config import DEFAULT_ACTIONS
+
 
 # TODO: Add test coverage for RandomAgent (see test_agent.py for examples)
 #   - Test that only legal actions are selected
@@ -12,7 +14,10 @@ class RandomAgent:
     Useful as a baseline opponent for curriculum learning.
     """
 
-    def __init__(self, player_index=0, actions=[-1, 0, 1, 2, 3]):
+    def __init__(self, player_index=0, actions=None):
+        if actions is None:
+            actions = DEFAULT_ACTIONS
+
         self.player_index = player_index
         self.actions = actions
 
@@ -27,13 +32,4 @@ class RandomAgent:
         Returns:
             A randomly selected legal action
         """
-        minimum_legal_bet = game_state.minimum_legal_bet()
-        maximum_legal_bet = game_state.maximum_legal_bet()
-
-        legal_actions = []
-        for action in self.actions:
-            # Folding (negative action) is always legal
-            if action < 0 or (minimum_legal_bet <= action <= maximum_legal_bet):
-                legal_actions.append(action)
-
-        return np.random.choice(legal_actions)
+        return np.random.choice(game_state.legal_actions(self.actions))

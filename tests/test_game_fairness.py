@@ -189,9 +189,9 @@ def test_player_2_wins_multiple_rounds():
 
     # After player 1 folds, player 2 acts
     assert state.current_player == 2
-    state.update(1)  # Player 2 completes to BB (bets 1 more to match the 2)
+    state.update(3)  # Player 2 raises: completes the BB (1 more) and raises by 2
 
-    # Now player 0 (BB) can check or raise
+    # Now player 0 (BB) faces a $2 raise (folding is only legal when facing a bet)
     assert state.current_player == 0
     state.update(-1)  # Player 0 folds
 
@@ -199,16 +199,12 @@ def test_player_2_wins_multiple_rounds():
     print(f"Wealths after round 2: {state.wealth}")
     assert state.wealth[2] > wealth_before_round_2[2], "Player 2 should have won money when others folded"
 
-    # Player 2 put in $2 total (SB $1 + $1 more to call), player 1 folded (0), player 0 lost BB ($2)
-    # So player 2 gains: BB ($2) from player 0 = net +$1 (put in 2, got back 3)
-    # Actually wait - player 1 posted nothing before folding (dealer acts first pre-flop, no blind)
-    # Player 2 posted SB ($1), then bet $1 more to call BB ($2 total)
-    # Player 0 posted BB ($2), then folded
-    # Player 1 folded before betting anything
-    # So pot = $1 (player 2 SB) + $1 (player 2 call) + $2 (player 0 BB) = $4
-    # But player 2 put in $2, so net gain = $4 - $2 = $2
-    # But player 0 also put in $2 (the BB), so that goes to player 2
+    # Player 1 folded before betting anything (dealer acts first pre-flop, no blind)
+    # Player 0 posted the BB ($2), then folded, so that $2 goes to player 2
     # Net: Player 2 gains $2, Player 0 loses $2, Player 1 unchanged
+    assert state.wealth[2] == wealth_before_round_2[2] + 2
+    assert state.wealth[0] == wealth_before_round_2[0] - 2
+    assert state.wealth[1] == wealth_before_round_2[1]
 
     print(f"✓ Player 2 won ${state.wealth[2] - wealth_before_round_2[2]} in round 2 (by fold)")
 

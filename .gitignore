@@ -137,3 +137,12 @@ training_output*.txt
 **/*h5
 
 *backup.png
+
+# Training run logs (see run_training.py)
+logs/
+
+# Run directories written by poker.runs.RunLogger (config, metrics, evals, checkpoints)
+runs/
+
+# Previous Python 3.8 environment kept for rollback during the Oct 2026 upgrade
+.venv-py38/
